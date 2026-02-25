@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <strings.h>
+#include <libgen.h>
 
 #include "ignore.h"
 
@@ -18,17 +19,20 @@
 #endif
 #define MAX_PATH_LENGTH PATH_MAX
 #define IGNORE_FILE ".gitignore"
-#define OUTPUT_FILE "_export.md"
-#define TEMP_OUTPUT_TEMPLATE "_export.md.tmp.XXXXXX"
+#define DEFAULT_OUTPUT_FILE "_export.md"
 
 // Application context structure to hold global state
 typedef struct {
     int verbose;
+    int no_clobber;
+    int output_is_stdout;
     size_t max_file_size;
+    const char* output_path;
     char** ignore_patterns;
     size_t ignore_count;
     struct stat temp_stat;
     struct stat final_stat;
+    int have_temp;
     int have_final;
 } AppContext;
 
@@ -56,10 +60,12 @@ int write_bytes(FILE* out, const void* data, size_t len);
 int compare_names(const void* lhs, const void* rhs);
 void free_names(char** names, size_t count);
 int is_likely_utf8(const unsigned char* s, size_t n);
+int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size);
 
 int main(int argc, char* argv[]) {
     AppContext ctx = {0};
     ctx.max_file_size = MAX_FILE_SIZE;  // Default value
+    ctx.output_path = DEFAULT_OUTPUT_FILE;
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
@@ -83,12 +89,36 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "Use -h or --help for usage information\n");
                 return 1;
             }
+        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            if (i + 1 < argc) {
+                ctx.output_path = argv[++i];
+                if (ctx.output_path[0] == '\0') {
+                    fprintf(stderr, "Invalid output path: empty string\n");
+                    return 1;
+                }
+                ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
+            } else {
+                fprintf(stderr, "Missing path value for -o/--output option\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+        } else if (strncmp(argv[i], "--output=", 9) == 0) {
+            ctx.output_path = argv[i] + 9;
+            if (ctx.output_path[0] == '\0') {
+                fprintf(stderr, "Invalid output path: empty string\n");
+                return 1;
+            }
+            ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
+        } else if (strcmp(argv[i], "--no-clobber") == 0) {
+            ctx.no_clobber = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [OPTIONS]\n", argv[0]);
             printf("Export codebase to markdown file.\n\n");
             printf("Options:\n");
             printf("  -v, --verbose    Show progress information\n");
             printf("  -s <size_kb>     Set maximum file size limit in KB (default: 100)\n");
+            printf("  -o, --output     Set output path (use '-' for stdout)\n");
+            printf("      --no-clobber Fail if output file already exists\n");
             printf("  -h, --help       Show this help message\n");
             return 0;
         } else {
@@ -104,80 +134,108 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Write to a securely-created temporary file first for atomic operation.
-    char temp_output_path[] = TEMP_OUTPUT_TEMPLATE;
-    int temp_fd = mkstemp(temp_output_path);
-    if (temp_fd == -1) {
-        perror("Error creating temporary output file");
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
-    }
+    int status = 1;
+    int temp_created = 0;
+    int output_needs_close = 0;
+    FILE* output_file = NULL;
+    char temp_output_path[MAX_PATH_LENGTH];
+    temp_output_path[0] = '\0';
 
-    FILE* output_file = fdopen(temp_fd, "w");
-    if (!output_file) {
-        perror("Error opening temporary output stream");
-        close(temp_fd);
-        unlink(temp_output_path);
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
-    }
+    if (ctx.output_is_stdout) {
+        output_file = stdout;
+    } else {
+        if (ctx.no_clobber) {
+            errno = 0;
+            if (stat(ctx.output_path, &ctx.final_stat) == 0) {
+                fprintf(stderr, "fuori: output file already exists: %s\n", ctx.output_path);
+                goto cleanup;
+            }
+            if (errno != ENOENT) {
+                perror("Error checking output path");
+                goto cleanup;
+            }
+        }
 
-    // Get stats for both temp and (optionally) final files
-    if (fstat(fileno(output_file), &ctx.temp_stat) == -1) {
-        perror("fstat on temporary output file");
-        fclose(output_file);
-        unlink(temp_output_path);
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
+        if (make_temp_output_template(ctx.output_path, temp_output_path, sizeof(temp_output_path)) != 0) {
+            perror("Error creating temporary output path");
+            goto cleanup;
+        }
+
+        // Write to a securely-created temporary file first for atomic operation.
+        int temp_fd = mkstemp(temp_output_path);
+        if (temp_fd == -1) {
+            perror("Error creating temporary output file");
+            goto cleanup;
+        }
+        temp_created = 1;
+
+        output_file = fdopen(temp_fd, "w");
+        if (!output_file) {
+            perror("Error opening temporary output stream");
+            close(temp_fd);
+            goto cleanup;
+        }
+        output_needs_close = 1;
+
+        // Get stats for both temp and (optionally) final files
+        if (fstat(fileno(output_file), &ctx.temp_stat) == -1) {
+            perror("fstat on temporary output file");
+            goto cleanup;
+        }
+        ctx.have_temp = 1;
+        ctx.have_final = (stat(ctx.output_path, &ctx.final_stat) == 0);
     }
-    ctx.have_final = (stat(OUTPUT_FILE, &ctx.final_stat) == 0);
 
     // Write markdown header
     if (write_text(output_file, "# Codebase Export\n\n") != 0 ||
         write_text(output_file, "This document contains all the source code files from the codebase.\n\n") != 0) {
         perror("Error writing output header");
-        fclose(output_file);
-        unlink(temp_output_path);
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
+        goto cleanup;
     }
 
     // Process current directory
     if (process_directory(".", output_file, &ctx) != 0) {
         fprintf(stderr, "Error processing directory\n");
-        fclose(output_file);
-        unlink(temp_output_path);  // Clean up temp file
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
+        goto cleanup;
     }
 
     if (fflush(output_file) != 0) {
         perror("Error flushing output file");
+        goto cleanup;
+    }
+    if (output_needs_close) {
+        if (fclose(output_file) != 0) {
+            output_file = NULL;
+            perror("Error closing output file");
+            goto cleanup;
+        }
+        output_file = NULL;
+        output_needs_close = 0;
+    }
+
+    if (!ctx.output_is_stdout) {
+        // Atomically move temp file to final destination
+        if (rename(temp_output_path, ctx.output_path) == -1) {
+            perror("Error moving temporary file to final destination");
+            goto cleanup;
+        }
+        temp_created = 0;
+        printf("Codebase exported to %s successfully!\n", ctx.output_path);
+    } else {
+        fprintf(stderr, "Codebase exported to stdout successfully!\n");
+    }
+
+    status = 0;
+
+cleanup:
+    if (output_needs_close && output_file) {
         fclose(output_file);
+    }
+    if (temp_created && temp_output_path[0] != '\0') {
         unlink(temp_output_path);
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
     }
-    if (fclose(output_file) != 0) {
-        perror("Error closing output file");
-        unlink(temp_output_path);
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
-    }
-
-    // Atomically move temp file to final destination
-    if (rename(temp_output_path, OUTPUT_FILE) == -1) {
-        perror("Error moving temporary file to final destination");
-        unlink(temp_output_path);  // Clean up temp file
-        free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-        return 1;
-    }
-
-    printf("Codebase exported to %s successfully!\n", OUTPUT_FILE);
-
-    // Clean up
     free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
-    return 0;
+    return status;
 }
 
 int process_directory(const char* base_path,
@@ -272,7 +330,8 @@ int process_directory(const char* base_path,
 
         // Skip temp output and final output files by device+inode
         if (S_ISREG(st.st_mode)) {
-            if ((st.st_dev == ctx->temp_stat.st_dev && st.st_ino == ctx->temp_stat.st_ino) ||
+            if ((ctx->have_temp &&
+                 st.st_dev == ctx->temp_stat.st_dev && st.st_ino == ctx->temp_stat.st_ino) ||
                 (ctx->have_final &&
                  st.st_dev == ctx->final_stat.st_dev && st.st_ino == ctx->final_stat.st_ino)) {
                 continue;
@@ -533,13 +592,6 @@ int should_exclude_file(const char* filepath,
                         size_t max_file_size,
                         char** patterns,
                         size_t count) {
-    const char* rel = (strncmp(filepath, "./", 2) == 0) ? filepath + 2 : filepath;
-
-    // Extra guard: skip output file by name.
-    if (strcmp(rel, OUTPUT_FILE) == 0) {
-        return 1;
-    }
-
     // Skip non-regular files
     if (!S_ISREG(st->st_mode)) {
         return 1;
@@ -557,6 +609,40 @@ int should_exclude_file(const char* filepath,
     }
 
     return 0; // Don't exclude
+}
+
+int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size) {
+    char path_copy[MAX_PATH_LENGTH];
+    if (!output_path || !tmpl || tmpl_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    size_t path_len = strlen(output_path);
+    if (path_len >= sizeof(path_copy)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(path_copy, output_path, path_len + 1);
+
+    char* dir = dirname(path_copy);
+    if (!dir || dir[0] == '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+
+    int written;
+    if (strcmp(dir, "/") == 0) {
+        written = snprintf(tmpl, tmpl_size, "/.fuori.tmp.XXXXXX");
+    } else {
+        written = snprintf(tmpl, tmpl_size, "%s/.fuori.tmp.XXXXXX", dir);
+    }
+    if (written < 0 || (size_t)written >= tmpl_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return 0;
 }
 
 int is_binary_file(const unsigned char* buffer, size_t bytes_read) {
