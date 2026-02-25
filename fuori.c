@@ -44,7 +44,10 @@ int process_directory(const char* base_path,
                       FILE* output_file,
                       AppContext* ctx);
 // Return codes: 0 = exported, 1 = skipped (binary/empty), -1 = error.
-int process_file(const char* filepath, const struct stat* st, FILE* output_file);
+int process_file(const char* filepath,
+                 const struct stat* st,
+                 size_t max_file_size,
+                 FILE* output_file);
 const char* get_language_identifier(const char* filepath, const unsigned char* buffer, size_t buffer_len);
 const char* detect_shebang(const unsigned char* buffer, size_t buffer_len);
 int write_fence(FILE* out, size_t count, const char* lang);
@@ -296,7 +299,7 @@ int process_directory(const char* base_path,
                 if (ctx->verbose) {
                     fprintf(stderr, "Processing file: %s\n", path);
                 }
-                int result = process_file(path, &st, output_file);
+                int result = process_file(path, &st, ctx->max_file_size, output_file);
                 if (result == 1) {
                     if (ctx->verbose) {
                         fprintf(stderr, "Skipping binary/empty file: %s\n", path);
@@ -325,7 +328,10 @@ cleanup:
 }
 
 // Return codes: 0 = exported, 1 = skipped (binary/empty), -1 = error.
-int process_file(const char* filepath, const struct stat* st, FILE* output_file) {
+int process_file(const char* filepath,
+                 const struct stat* st,
+                 size_t max_file_size,
+                 FILE* output_file) {
     size_t max_run = 0;
     size_t current_run = 0;
     size_t fence = 3;
@@ -344,14 +350,6 @@ int process_file(const char* filepath, const struct stat* st, FILE* output_file)
     if (st->st_size < 0) {
         errno = EINVAL;
         perror("Invalid file size");
-        return -1;
-    }
-
-    buffer_size = (size_t)st->st_size;
-    buffer_capacity = (buffer_size > 0) ? buffer_size : sizeof(extra_chunk);
-    buffer = malloc(buffer_capacity);
-    if (!buffer) {
-        perror("Error allocating memory");
         return -1;
     }
 
@@ -379,21 +377,38 @@ int process_file(const char* filepath, const struct stat* st, FILE* output_file)
         return -1;
     }
     if (opened_st.st_dev != st->st_dev || opened_st.st_ino != st->st_ino) {
-        free(buffer);
         close(fd);
         errno = EAGAIN;
         perror("File changed while being processed");
         return -1;
     }
+    if (opened_st.st_size < 0) {
+        close(fd);
+        errno = EINVAL;
+        perror("Invalid opened file size");
+        return -1;
+    }
+    if ((size_t)opened_st.st_size > max_file_size) {
+        close(fd);
+        return 1;
+    }
 
     file = fdopen(fd, "rb");
     if (!file) {
-        free(buffer);
         close(fd);
         perror("Error converting file descriptor to stream");
         return -1;
     }
     fd = -1;
+
+    buffer_size = (size_t)opened_st.st_size;
+    buffer_capacity = (buffer_size > 0) ? buffer_size : sizeof(extra_chunk);
+    buffer = malloc(buffer_capacity);
+    if (!buffer) {
+        fclose(file);
+        perror("Error allocating memory");
+        return -1;
+    }
 
     size_t bytes_read = 0;
     if (buffer_size > 0) {
@@ -415,6 +430,11 @@ int process_file(const char* filepath, const struct stat* st, FILE* output_file)
             return -1;
         }
         size_t needed = bytes_read + extra_read;
+        if (needed > max_file_size) {
+            free(buffer);
+            fclose(file);
+            return 1;
+        }
         if (needed > buffer_capacity) {
             size_t new_capacity = buffer_capacity;
             while (new_capacity < needed) {
@@ -515,8 +535,8 @@ int should_exclude_file(const char* filepath,
                         size_t count) {
     const char* rel = (strncmp(filepath, "./", 2) == 0) ? filepath + 2 : filepath;
 
-    // Extra guard: skip output files by name.
-    if (strcmp(rel, OUTPUT_FILE) == 0 || strncmp(rel, "_export.md.tmp", 14) == 0) {
+    // Extra guard: skip output file by name.
+    if (strcmp(rel, OUTPUT_FILE) == 0) {
         return 1;
     }
 
