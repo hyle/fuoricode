@@ -66,25 +66,25 @@ By default, the application creates a file named `_export.md` in the current dir
 **Examples:**
 ```bash
 # Basic usage
-./fuori
+fuori
 
 # With verbose output
-./fuori -v
+fuori -v
 
 # With custom file size limit
-./fuori -s 50
+fuori -s 50
 
 # Write to a custom output path
-./fuori -o exports/codebase.md
+fuori -o exports/codebase.md
 
 # Write to stdout (useful in pipelines)
-./fuori -o - > codebase.md
+fuori -o - > codebase.md
 
 # Prevent overwriting an existing output file
-./fuori -o codebase.md --no-clobber
+fuori -o codebase.md --no-clobber
 
 # Show help
-./fuori --help
+fuori --help
 ```
 
 ## .gitignore File
