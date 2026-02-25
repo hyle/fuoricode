@@ -9,7 +9,7 @@ A C application that exports a codebase to a single markdown file with UTF-8 enc
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
 - Formats code in markdown with appropriate language identifiers
-- Outputs to `_export.md` in UTF-8 encoding
+- Outputs to `_export.md` by default (configurable, including stdout)
 
 ## Requirements
 
@@ -48,7 +48,7 @@ Simply run the executable in any directory you want to export:
 ./fuori
 ```
 
-The application will create a file named `_export.md` in the current directory containing all the source code files in markdown format.
+By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format.
 
 ### Command Line Options
 
@@ -59,6 +59,8 @@ The application will create a file named `_export.md` in the current directory c
 **Options:**
 - `-v, --verbose`: Show progress information during processing
 - `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
+- `-o, --output <path>`: Set output path (use `-` for stdout)
+- `--no-clobber`: Fail if output file already exists
 - `-h, --help`: Display help message
 
 **Examples:**
@@ -71,6 +73,15 @@ The application will create a file named `_export.md` in the current directory c
 
 # With custom file size limit
 ./fuori -s 50
+
+# Write to a custom output path
+./fuori -o exports/codebase.md
+
+# Write to stdout (useful in pipelines)
+./fuori -o - > codebase.md
+
+# Prevent overwriting an existing output file
+./fuori -o codebase.md --no-clobber
 
 # Show help
 ./fuori --help
