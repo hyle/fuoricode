@@ -300,7 +300,9 @@ int process_directory(const char* base_path,
         goto cleanup;
     }
 
-    qsort(names, name_count, sizeof(char*), compare_names);
+    if (name_count > 1) {
+        qsort(names, name_count, sizeof(char*), compare_names);
+    }
 
     for (size_t i = 0; i < name_count; i++) {
         const char* name = names[i];
@@ -598,6 +600,9 @@ int should_exclude_file(const char* filepath,
     }
 
     // Check file size
+    if (st->st_size < 0) {
+        return 1;
+    }
     if ((size_t)st->st_size > max_file_size) {
         return 1; // Exclude if too large
     }
