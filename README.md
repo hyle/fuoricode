@@ -13,8 +13,8 @@ A C application that exports a codebase to a single markdown file with UTF-8 enc
 
 ## Requirements
 
-- GCC compiler
-- Standard C library
+- C99 compiler (project is built with `-std=c99`)
+- POSIX.1-2008 environment/APIs (project is built with `-D_POSIX_C_SOURCE=200809L`)
 - Unix-like environment (Linux, macOS, etc.)
 
 ## Compilation
