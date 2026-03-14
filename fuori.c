@@ -143,6 +143,12 @@ int main(int argc, char* argv[]) {
 
     if (ctx.output_is_stdout) {
         output_file = stdout;
+        if (fstat(fileno(output_file), &ctx.final_stat) == 0 &&
+            S_ISREG(ctx.final_stat.st_mode)) {
+            // When stdout is redirected to a file, exclude that inode from traversal
+            // to avoid exporting the output back into itself.
+            ctx.have_final = 1;
+        }
     } else {
         if (ctx.no_clobber) {
             errno = 0;
