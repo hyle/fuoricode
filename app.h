@@ -14,6 +14,8 @@
 #define DEFAULT_OUTPUT_FILE "_export.md"
 #define DEFAULT_WARN_TOKENS 200000
 
+struct IgnorePattern;
+
 typedef struct {
     int verbose;
     int no_clobber;
@@ -24,7 +26,7 @@ typedef struct {
     size_t warn_tokens;
     size_t max_tokens;
     const char* output_path;
-    char** ignore_patterns;
+    IgnorePattern* ignore_patterns;
     size_t ignore_count;
     struct stat temp_stat;
     struct stat final_stat;
