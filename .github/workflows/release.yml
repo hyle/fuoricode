@@ -23,7 +23,7 @@ jobs:
             asset: fuori-macos-arm64.tar.gz
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build
         run: make
