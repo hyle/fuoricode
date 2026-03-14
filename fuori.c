@@ -999,6 +999,13 @@ int run_command_capture(const char* const argv[],
         close(stdout_pipe[1]);
         return -1;
     }
+    if (fcntl(error_pipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
 
     pid = fork();
     if (pid == -1) {
