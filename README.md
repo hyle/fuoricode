@@ -175,15 +175,19 @@ The output markdown file will contain:
 
 Example:
 ````markdown
+# Codebase Export
+
+This document contains all the source code files from the current directory subtree.
+
 ## Project Tree
 
 ```text
 ├── src
-│   ├── fuori.c
-│   └── ignore.c
-├── Makefile
-└── README.md
+│   └── main.c
+└── Makefile
 ```
+
+Example file contents excerpt (the `Makefile` section is omitted for brevity):
 
 ## src/main.c
 
