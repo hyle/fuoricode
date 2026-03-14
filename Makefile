@@ -17,8 +17,9 @@ $(TARGET): $(SOURCES)
 $(TEST_TARGET): test_ignore.c ignore.c ignore.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TEST_TARGET) test_ignore.c ignore.c
 
-test: $(TEST_TARGET)
+test: $(TARGET) $(TEST_TARGET)
 	./$(TEST_TARGET)
+	BIN=./$(TARGET) sh ./test_cli.sh
 
 clean:
 	rm -f $(TARGET) $(TEST_TARGET)
@@ -27,4 +28,4 @@ install: $(TARGET)
 	install -d $(BINDIR)
 	install -m 755 $(TARGET) $(BINDIR)
 
-.PHONY: all clean install
+.PHONY: all clean install test

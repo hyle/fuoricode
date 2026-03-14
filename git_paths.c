@@ -9,6 +9,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+typedef enum {
+    GIT_PROBE_READY = 0,
+    GIT_PROBE_FALLBACK
+} GitProbeResult;
+
 static int compare_selected_paths(const void* lhs, const void* rhs) {
     const SelectedPath* left = lhs;
     const SelectedPath* right = rhs;
@@ -162,7 +167,11 @@ cleanup:
     return status;
 }
 
-static int capture_git_line(const char* repo_root, const char* rev_parse_arg, char** line_out) {
+static int capture_git_line(const char* repo_root,
+                            const char* rev_parse_arg,
+                            int quiet_probe,
+                            char** line_out,
+                            GitProbeResult* probe_result) {
     const char* const argv[] = {"git", "-C", repo_root, "rev-parse", rev_parse_arg, NULL};
     unsigned char* output = NULL;
     size_t output_len = 0;
@@ -170,19 +179,34 @@ static int capture_git_line(const char* repo_root, const char* rev_parse_arg, ch
     int exec_errno = 0;
 
     *line_out = NULL;
+    if (probe_result) {
+        *probe_result = GIT_PROBE_READY;
+    }
     if (run_command_capture(argv, &output, &output_len, &exit_status, &exec_errno) != 0) {
         perror("Error running git");
         return -1;
     }
     if (exec_errno != 0) {
         errno = exec_errno;
-        perror("Error executing git");
+        if (quiet_probe && errno == ENOENT) {
+            if (probe_result) {
+                *probe_result = GIT_PROBE_FALLBACK;
+            }
+        } else {
+            perror("Error executing git");
+        }
         free(output);
         return -1;
     }
     if (!WIFEXITED(exit_status) || WEXITSTATUS(exit_status) != 0) {
         errno = 0;
-        fprintf(stderr, "git rev-parse failed for %s\n", rev_parse_arg);
+        if (quiet_probe) {
+            if (probe_result) {
+                *probe_result = GIT_PROBE_FALLBACK;
+            }
+        } else {
+            fprintf(stderr, "git rev-parse failed for %s\n", rev_parse_arg);
+        }
         free(output);
         return -1;
     }
@@ -205,120 +229,85 @@ static int capture_git_line(const char* repo_root, const char* rev_parse_arg, ch
     return 0;
 }
 
-int collect_git_paths(FileSelectionMode mode,
-                      const char* diff_range,
-                      SelectedPath** paths_out,
-                      size_t* count_out) {
-    char* repo_root = NULL;
-    char* prefix = NULL;
-    const char* diff_filter = "--diff-filter=AMR";
-    const char* const* argv = NULL;
-    const char* args[12];
-    unsigned char* output = NULL;
-    size_t output_len = 0;
-    int exit_status = 0;
-    int exec_errno = 0;
+static int append_selected_path(SelectedPath** paths,
+                                size_t* count,
+                                size_t* capacity,
+                                const char* repo_root,
+                                size_t repo_root_len,
+                                const char* prefix,
+                                size_t prefix_len,
+                                const char* repo_rel,
+                                size_t repo_rel_len) {
+    const char* display_rel = repo_rel;
+    if (prefix_len > 0 &&
+        strncmp(repo_rel, prefix, prefix_len) == 0) {
+        display_rel = repo_rel + prefix_len;
+    }
+
+    if (*count == *capacity) {
+        size_t new_capacity = (*capacity == 0) ? 16 : *capacity * 2;
+        SelectedPath* new_paths = realloc(*paths, new_capacity * sizeof(**paths));
+        if (!new_paths) {
+            return -1;
+        }
+        *paths = new_paths;
+        *capacity = new_capacity;
+    }
+
+    size_t open_path_len = repo_root_len + 1 + repo_rel_len;
+    (*paths)[*count].open_path = malloc(open_path_len + 1);
+    if (!(*paths)[*count].open_path) {
+        return -1;
+    }
+    memcpy((*paths)[*count].open_path, repo_root, repo_root_len);
+    (*paths)[*count].open_path[repo_root_len] = '/';
+    memcpy((*paths)[*count].open_path + repo_root_len + 1, repo_rel, repo_rel_len);
+    (*paths)[*count].open_path[open_path_len] = '\0';
+
+    (*paths)[*count].display_path = strdup(display_rel);
+    if (!(*paths)[*count].display_path) {
+        free((*paths)[*count].open_path);
+        (*paths)[*count].open_path = NULL;
+        return -1;
+    }
+
+    (*count)++;
+    return 0;
+}
+
+static int parse_selected_paths_output(const unsigned char* output,
+                                       size_t output_len,
+                                       const char* repo_root,
+                                       const char* prefix,
+                                       SelectedPath** paths_out,
+                                       size_t* count_out) {
     SelectedPath* paths = NULL;
     size_t count = 0;
     size_t capacity = 0;
-    int status = -1;
-
-    *paths_out = NULL;
-    *count_out = 0;
-
-    errno = 0;
-    if (capture_git_line(".", "--show-toplevel", &repo_root) != 0) {
-        if (errno == ENOENT) {
-            fprintf(stderr, "Git file-selection modes require git to be installed\n");
-        } else {
-            fprintf(stderr, "Git file-selection modes require a Git repository\n");
-        }
-        goto cleanup;
-    }
-    if (capture_git_line(".", "--show-prefix", &prefix) != 0) {
-        goto cleanup;
-    }
-
-    size_t argc = 0;
-    args[argc++] = "git";
-    args[argc++] = "-C";
-    args[argc++] = repo_root;
-    args[argc++] = "diff";
-    if (mode == FILE_SELECTION_GIT_STAGED) {
-        args[argc++] = "--cached";
-    }
-    args[argc++] = "--name-only";
-    args[argc++] = diff_filter;
-    args[argc++] = "-z";
-    if (mode == FILE_SELECTION_GIT_DIFF) {
-        args[argc++] = diff_range;
-    }
-    if (prefix[0] != '\0') {
-        args[argc++] = "--";
-        args[argc++] = prefix;
-    }
-    args[argc] = NULL;
-    argv = args;
-
-    if (run_command_capture(argv, &output, &output_len, &exit_status, &exec_errno) != 0) {
-        perror("Error running git");
-        goto cleanup;
-    }
-    if (exec_errno != 0) {
-        errno = exec_errno;
-        perror("Error executing git");
-        goto cleanup;
-    }
-    if (!WIFEXITED(exit_status) || WEXITSTATUS(exit_status) != 0) {
-        fprintf(stderr, "git diff failed for the requested file-selection mode\n");
-        goto cleanup;
-    }
-
     size_t start = 0;
     size_t prefix_len = strlen(prefix);
     size_t repo_root_len = strlen(repo_root);
+
     while (start < output_len) {
         size_t end = start;
         while (end < output_len && output[end] != '\0') {
             end++;
         }
         if (end > start) {
-            size_t repo_rel_len = end - start;
             const char* repo_rel = (const char*)(output + start);
-            const char* display_rel = repo_rel;
-
-            if (prefix_len > 0 &&
-                strncmp(repo_rel, prefix, prefix_len) == 0) {
-                display_rel = repo_rel + prefix_len;
+            size_t repo_rel_len = end - start;
+            if (append_selected_path(&paths,
+                                     &count,
+                                     &capacity,
+                                     repo_root,
+                                     repo_root_len,
+                                     prefix,
+                                     prefix_len,
+                                     repo_rel,
+                                     repo_rel_len) != 0) {
+                free_selected_paths(paths, count);
+                return -1;
             }
-
-            if (count == capacity) {
-                size_t new_capacity = (capacity == 0) ? 16 : capacity * 2;
-                SelectedPath* new_paths = realloc(paths, new_capacity * sizeof(*paths));
-                if (!new_paths) {
-                    goto cleanup;
-                }
-                paths = new_paths;
-                capacity = new_capacity;
-            }
-
-            size_t open_path_len = repo_root_len + 1 + repo_rel_len;
-            paths[count].open_path = malloc(open_path_len + 1);
-            if (!paths[count].open_path) {
-                goto cleanup;
-            }
-            memcpy(paths[count].open_path, repo_root, repo_root_len);
-            paths[count].open_path[repo_root_len] = '/';
-            memcpy(paths[count].open_path + repo_root_len + 1, repo_rel, repo_rel_len);
-            paths[count].open_path[open_path_len] = '\0';
-
-            paths[count].display_path = strdup(display_rel);
-            if (!paths[count].display_path) {
-                free(paths[count].open_path);
-                paths[count].open_path = NULL;
-                goto cleanup;
-            }
-            count++;
         }
         start = end + 1;
     }
@@ -347,13 +336,112 @@ int collect_git_paths(FileSelectionMode mode,
 
     *paths_out = paths;
     *count_out = count;
+    return 0;
+}
+
+int collect_git_paths(FileSelectionMode mode,
+                      const char* diff_range,
+                      int quiet_probe,
+                      SelectedPath** paths_out,
+                      size_t* count_out,
+                      GitPathResult* result_out) {
+    char* repo_root = NULL;
+    char* prefix = NULL;
+    const char* diff_filter = "--diff-filter=AMR";
+    const char* args[13];
+    unsigned char* output = NULL;
+    size_t output_len = 0;
+    int exit_status = 0;
+    int exec_errno = 0;
+    SelectedPath* paths = NULL;
+    size_t parsed_count = 0;
+    GitProbeResult probe_result = GIT_PROBE_READY;
+    int status = -1;
+
+    *paths_out = NULL;
+    *count_out = 0;
+    if (result_out) {
+        *result_out = GIT_PATHS_FALLBACK;
+    }
+
+    errno = 0;
+    if (capture_git_line(".", "--show-toplevel", quiet_probe, &repo_root, &probe_result) != 0) {
+        if (quiet_probe && probe_result == GIT_PROBE_FALLBACK) {
+            status = 0;
+            goto cleanup;
+        }
+        if (errno == ENOENT) {
+            fprintf(stderr, "Git file-selection modes require git to be installed\n");
+        } else {
+            fprintf(stderr, "Git file-selection modes require a Git repository\n");
+        }
+        goto cleanup;
+    }
+    if (capture_git_line(".", "--show-prefix", quiet_probe, &prefix, &probe_result) != 0) {
+        if (quiet_probe && probe_result == GIT_PROBE_FALLBACK) {
+            status = 0;
+            goto cleanup;
+        }
+        goto cleanup;
+    }
+
+    size_t argc = 0;
+    args[argc++] = "git";
+    args[argc++] = "-C";
+    args[argc++] = repo_root;
+    args[argc++] = (mode == FILE_SELECTION_GIT_WORKTREE) ? "ls-files" : "diff";
+    if (mode == FILE_SELECTION_GIT_WORKTREE) {
+        args[argc++] = "--cached";
+        args[argc++] = "--others";
+        args[argc++] = "--exclude-standard";
+    } else {
+        if (mode == FILE_SELECTION_GIT_STAGED) {
+            args[argc++] = "--cached";
+        }
+        args[argc++] = "--name-only";
+        args[argc++] = diff_filter;
+        if (mode == FILE_SELECTION_GIT_DIFF) {
+            args[argc++] = diff_range;
+        }
+    }
+    args[argc++] = "-z";
+    if (prefix[0] != '\0') {
+        args[argc++] = "--";
+        args[argc++] = prefix;
+    }
+    args[argc] = NULL;
+
+    if (run_command_capture(args, &output, &output_len, &exit_status, &exec_errno) != 0) {
+        perror("Error running git");
+        goto cleanup;
+    }
+    if (exec_errno != 0) {
+        errno = exec_errno;
+        perror("Error executing git");
+        goto cleanup;
+    }
+    if (!WIFEXITED(exit_status) || WEXITSTATUS(exit_status) != 0) {
+        fprintf(stderr, "git %s failed for the requested file-selection mode\n",
+                (mode == FILE_SELECTION_GIT_WORKTREE) ? "ls-files" : "diff");
+        goto cleanup;
+    }
+
+    if (parse_selected_paths_output(output, output_len, repo_root, prefix, &paths, &parsed_count) != 0) {
+        goto cleanup;
+    }
+
+    *paths_out = paths;
+    *count_out = parsed_count;
     paths = NULL;
+    if (result_out) {
+        *result_out = GIT_PATHS_COLLECTED;
+    }
     status = 0;
 
 cleanup:
     free(output);
     free(repo_root);
     free(prefix);
-    free_selected_paths(paths, count);
+    free_selected_paths(paths, parsed_count);
     return status;
 }

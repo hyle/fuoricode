@@ -44,12 +44,14 @@ static int parse_positive_size_value(const char* value,
 
 static void print_usage(const char* argv0) {
     printf("Usage: %s [OPTIONS]\n", argv0);
-    printf("Export codebase to markdown file.\n\n");
+    printf("Export codebase to markdown file.\n");
+    printf("Default mode uses Git's worktree view when available and falls back to a recursive filesystem walk.\n\n");
     printf("Options:\n");
     printf("  -V, --version       Show version information\n");
     printf("  -v, --verbose       Show progress information\n");
     printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
     printf("  -o, --output        Set output path (use '-' for stdout)\n");
+    printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
     printf("      --staged        Export staged files from the current Git subtree\n");
     printf("      --unstaged      Export unstaged tracked files from the current Git subtree\n");
     printf("      --diff <r>      Export files changed by a git diff range (for example main...HEAD)\n");
@@ -158,10 +160,12 @@ static int make_temp_output_template(const char* output_path, char* tmpl, size_t
 
 int main(int argc, char* argv[]) {
     AppContext ctx = {0};
-    FileSelectionMode selection_mode = FILE_SELECTION_RECURSIVE;
+    FileSelectionMode requested_mode = FILE_SELECTION_AUTO;
+    FileSelectionMode resolved_mode = FILE_SELECTION_RECURSIVE;
     const char* diff_range = NULL;
     SelectedPath* selected_paths = NULL;
     size_t selected_count = 0;
+    GitPathResult git_result = GIT_PATHS_FALLBACK;
     ExportPlan plan = {0};
     ExportMetrics metrics = {0};
     int status = 1;
@@ -169,6 +173,7 @@ int main(int argc, char* argv[]) {
     int output_needs_close = 0;
     FILE* output_file = NULL;
     char temp_output_path[MAX_PATH_LENGTH];
+    int force_no_git = 0;
 
     ctx.max_file_size = MAX_FILE_SIZE;
     ctx.show_tree = 1;
@@ -215,6 +220,8 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
+        } else if (strcmp(argv[i], "--no-git") == 0) {
+            force_no_git = 1;
         } else if (strcmp(argv[i], "--no-clobber") == 0) {
             ctx.no_clobber = 1;
         } else if (strcmp(argv[i], "--tree") == 0) {
@@ -264,21 +271,21 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
         } else if (strcmp(argv[i], "--staged") == 0) {
-            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+            if (requested_mode != FILE_SELECTION_AUTO) {
                 fprintf(stderr, "File-selection flags are mutually exclusive\n");
                 fprintf(stderr, "Use -h or --help for usage information\n");
                 return 1;
             }
-            selection_mode = FILE_SELECTION_GIT_STAGED;
+            requested_mode = FILE_SELECTION_GIT_STAGED;
         } else if (strcmp(argv[i], "--unstaged") == 0) {
-            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+            if (requested_mode != FILE_SELECTION_AUTO) {
                 fprintf(stderr, "File-selection flags are mutually exclusive\n");
                 fprintf(stderr, "Use -h or --help for usage information\n");
                 return 1;
             }
-            selection_mode = FILE_SELECTION_GIT_UNSTAGED;
+            requested_mode = FILE_SELECTION_GIT_UNSTAGED;
         } else if (strcmp(argv[i], "--diff") == 0) {
-            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+            if (requested_mode != FILE_SELECTION_AUTO) {
                 fprintf(stderr, "File-selection flags are mutually exclusive\n");
                 fprintf(stderr, "Use -h or --help for usage information\n");
                 return 1;
@@ -293,9 +300,9 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "Invalid diff range: empty string\n");
                 return 1;
             }
-            selection_mode = FILE_SELECTION_GIT_DIFF;
+            requested_mode = FILE_SELECTION_GIT_DIFF;
         } else if (strncmp(argv[i], "--diff=", 7) == 0) {
-            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+            if (requested_mode != FILE_SELECTION_AUTO) {
                 fprintf(stderr, "File-selection flags are mutually exclusive\n");
                 fprintf(stderr, "Use -h or --help for usage information\n");
                 return 1;
@@ -305,7 +312,7 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "Invalid diff range: empty string\n");
                 return 1;
             }
-            selection_mode = FILE_SELECTION_GIT_DIFF;
+            requested_mode = FILE_SELECTION_GIT_DIFF;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -316,13 +323,43 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (load_ignore_patterns(IGNORE_FILE, &ctx.ignore_patterns, &ctx.ignore_count) != 0) {
-        fprintf(stderr, "Error: Failed to initialize ignore patterns.\n");
+    if (force_no_git && requested_mode != FILE_SELECTION_AUTO) {
+        fprintf(stderr, "--no-git cannot be combined with --staged, --unstaged, or --diff\n");
+        fprintf(stderr, "Use -h or --help for usage information\n");
         return 1;
     }
 
-    if (selection_mode != FILE_SELECTION_RECURSIVE) {
-        if (collect_git_paths(selection_mode, diff_range, &selected_paths, &selected_count) != 0) {
+    if (force_no_git) {
+        requested_mode = FILE_SELECTION_RECURSIVE;
+    }
+
+    if (requested_mode == FILE_SELECTION_AUTO) {
+        if (collect_git_paths(FILE_SELECTION_GIT_WORKTREE,
+                              NULL,
+                              1,
+                              &selected_paths,
+                              &selected_count,
+                              &git_result) != 0) {
+            goto cleanup;
+        }
+        resolved_mode = (git_result == GIT_PATHS_COLLECTED) ? FILE_SELECTION_GIT_WORKTREE
+                                                            : FILE_SELECTION_RECURSIVE;
+    } else {
+        resolved_mode = requested_mode;
+    }
+
+    if (resolved_mode == FILE_SELECTION_RECURSIVE) {
+        if (load_ignore_patterns(IGNORE_FILE, &ctx.ignore_patterns, &ctx.ignore_count) != 0) {
+            fprintf(stderr, "Error: Failed to initialize ignore patterns.\n");
+            return 1;
+        }
+    } else if (resolved_mode != FILE_SELECTION_GIT_WORKTREE) {
+        if (collect_git_paths(resolved_mode,
+                              diff_range,
+                              0,
+                              &selected_paths,
+                              &selected_count,
+                              &git_result) != 0) {
             goto cleanup;
         }
     }
@@ -346,7 +383,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (selection_mode == FILE_SELECTION_RECURSIVE) {
+    if (resolved_mode == FILE_SELECTION_RECURSIVE) {
         if (collect_recursive_export_plan(&ctx, &plan) != 0) {
             fprintf(stderr, "Error collecting directory entries\n");
             goto cleanup;
@@ -358,7 +395,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (calculate_export_metrics(&plan, selection_mode, ctx.show_tree, ctx.tree_depth, &metrics) != 0) {
+    if (calculate_export_metrics(&plan, resolved_mode, ctx.show_tree, ctx.tree_depth, &metrics) != 0) {
         perror("Error calculating export metrics");
         goto cleanup;
     }
@@ -430,7 +467,7 @@ int main(int argc, char* argv[]) {
         ctx.have_temp = 1;
     }
 
-    if (write_export_header(output_file, selection_mode) != 0) {
+    if (write_export_header(output_file, resolved_mode) != 0) {
         perror("Error writing output header");
         goto cleanup;
     }
