@@ -6,6 +6,7 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 
 - **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants and LLM-based coding workflows
 - Recursively scans the current directory for source code files
+- Can export Git-selected files via `--staged`, `--unstaged`, or `--diff <range>`
 - Respects exclusions defined in a `.gitignore` file
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
@@ -62,8 +63,13 @@ By default, the application creates a file named `_export.md` in the current dir
 - `-v, --verbose`: Show progress information during processing
 - `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
 - `-o, --output <path>`: Set output path (use `-` for stdout)
+- `--staged`: Export staged files from the current Git subtree
+- `--unstaged`: Export unstaged tracked files from the current Git subtree
+- `--diff <range>` / `--diff=<range>`: Export files changed by a Git diff range
 - `--no-clobber`: Fail if output file already exists
 - `-h, --help`: Display help message
+
+Git file-selection modes are mutually exclusive: use at most one of `--staged`, `--unstaged`, or `--diff`.
 
 **Examples:**
 ```bash
@@ -84,6 +90,18 @@ fuori -o - > codebase.md
 
 # Prevent overwriting an existing output file
 fuori -o codebase.md --no-clobber
+
+# Export staged files only
+fuori --staged
+
+# Export unstaged tracked files only
+fuori --unstaged
+
+# Export files changed in the last 3 commits
+fuori --diff HEAD~3..HEAD
+
+# Export files changed on the current branch since it diverged from main
+fuori --diff main...HEAD
 
 # Show help
 fuori --help
@@ -111,6 +129,23 @@ node_modules/
 ## File Size Limit
 
 Files larger than the specified size limit (default 100KB) are automatically excluded from the export to prevent including large binary or data files. You can change this limit using the `-s` option.
+
+## Git File Selection
+
+When you use `--staged`, `--unstaged`, or `--diff`, `fuori` asks Git for an explicit file list instead of recursively walking the tree.
+
+- `--staged` uses staged files in `AMR` (`git diff --cached --name-only --diff-filter=AMR`)
+- `--unstaged` uses tracked unstaged files in `AMR` (`git diff --name-only --diff-filter=AMR`)
+- `--diff <range>` passes `<range>` directly to `git diff`, so both two-dot and three-dot ranges work, including examples like `HEAD~3..HEAD`, `main...HEAD`, and `v1.2.0..HEAD`
+
+Additional semantics:
+
+- Git file-selection modes are scoped to the current working directory subtree when run from a Git subdirectory
+- Git-selected files bypass selection-time ignore rules such as `.gitignore`
+- Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
+- `--unstaged` does not include untracked files
+- Renamed files are exported under the current path reported by Git
+- If Git selects no files, `fuori` still succeeds and writes only the normal export header
 
 ## Binary File Detection
 
