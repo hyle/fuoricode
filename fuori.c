@@ -3,6 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
+#include <fnmatch.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -41,12 +42,14 @@ int is_binary_file(const unsigned char* buffer, size_t bytes_read);
 int should_exclude_file(const char* filepath,
                         const struct stat* st,
                         size_t max_file_size,
+                        int ancestor_ignored,
                         char** patterns,
                         size_t count);
 void sanitize_path(char* path);
 int process_directory(const char* base_path,
                       FILE* output_file,
-                      AppContext* ctx);
+                      AppContext* ctx,
+                      int ancestor_ignored);
 // Return codes: 0 = exported, 1 = skipped (binary/empty), -1 = error.
 int process_file(const char* filepath,
                  const struct stat* st,
@@ -61,6 +64,7 @@ int compare_names(const void* lhs, const void* rhs);
 void free_names(char** names, size_t count);
 int is_likely_utf8(const unsigned char* s, size_t n);
 int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size);
+int should_descend_into_ignored_dir(const char* dirpath, char** patterns, size_t count);
 
 int main(int argc, char* argv[]) {
     AppContext ctx = {0};
@@ -200,7 +204,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Process current directory
-    if (process_directory(".", output_file, &ctx) != 0) {
+    if (process_directory(".", output_file, &ctx, 0) != 0) {
         fprintf(stderr, "Error processing directory\n");
         goto cleanup;
     }
@@ -246,7 +250,8 @@ cleanup:
 
 int process_directory(const char* base_path,
                       FILE* output_file,
-                      AppContext* ctx) {
+                      AppContext* ctx,
+                      int ancestor_ignored) {
     DIR* dir = NULL;
     struct dirent* entry;
     char path[MAX_PATH_LENGTH];
@@ -347,22 +352,36 @@ int process_directory(const char* base_path,
         }
 
         if (S_ISDIR(st.st_mode)) {
-            // Apply ignore file to directories before recursion
-            // Pass 1 for is_dir
-            if (is_ignored(path, ctx->ignore_patterns, ctx->ignore_count, 1)) {
-                if (ctx->verbose) {
-                    fprintf(stderr, "Skipping ignored directory: %s\n", path);
+            int dir_is_ignored = resolve_ignore_state(path,
+                                                      ctx->ignore_patterns,
+                                                      ctx->ignore_count,
+                                                      1,
+                                                      ancestor_ignored);
+            if (dir_is_ignored) {
+                if (should_descend_into_ignored_dir(path, ctx->ignore_patterns, ctx->ignore_count)) {
+                    if (ctx->verbose) {
+                        fprintf(stderr, "Descending into ignored directory due to negated descendant pattern: %s\n", path);
+                    }
+                } else {
+                    if (ctx->verbose) {
+                        fprintf(stderr, "Skipping ignored directory: %s\n", path);
+                    }
+                    continue;
                 }
-                continue;
             }
             // Recursively process subdirectory
-            if (process_directory(path, output_file, ctx) != 0) {
+            if (process_directory(path, output_file, ctx, dir_is_ignored) != 0) {
                 status = -1;
                 goto cleanup;
             }
         } else if (S_ISREG(st.st_mode)) {
             // Process regular file
-            if (!should_exclude_file(path, &st, ctx->max_file_size, ctx->ignore_patterns, ctx->ignore_count)) {
+            if (!should_exclude_file(path,
+                                     &st,
+                                     ctx->max_file_size,
+                                     ancestor_ignored,
+                                     ctx->ignore_patterns,
+                                     ctx->ignore_count)) {
                 if (ctx->verbose) {
                     fprintf(stderr, "Processing file: %s\n", path);
                 }
@@ -598,6 +617,7 @@ int process_file(const char* filepath,
 int should_exclude_file(const char* filepath,
                         const struct stat* st,
                         size_t max_file_size,
+                        int ancestor_ignored,
                         char** patterns,
                         size_t count) {
     // Skip non-regular files
@@ -615,7 +635,7 @@ int should_exclude_file(const char* filepath,
 
     // Check if ignored by the ignore file
     // Pass 0 for is_dir
-    if (is_ignored(filepath, patterns, count, 0)) {
+    if (resolve_ignore_state(filepath, patterns, count, 0, ancestor_ignored)) {
         return 1;
     }
 
@@ -654,6 +674,81 @@ int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_s
     }
 
     return 0;
+}
+
+int should_descend_into_ignored_dir(const char* dirpath, char** patterns, size_t count) {
+    if (!patterns) return 0;
+
+    const char* rel = (strncmp(dirpath, "./", 2) == 0) ? dirpath + 2 : dirpath;
+    if (*rel == '\0') return 0;
+
+    int should_descend = 0;
+    for (size_t i = 0; i < count; i++) {
+        const char* raw_pattern = patterns[i];
+        if (!raw_pattern || raw_pattern[0] != '!') {
+            continue;
+        }
+
+        const char* pattern = raw_pattern + 1;
+        while (*pattern == '/') {
+            pattern++;
+        }
+        size_t plen = strlen(pattern);
+        while (plen > 0 && pattern[plen - 1] == '/') {
+            plen--;
+        }
+        if (plen == 0) {
+            continue;
+        }
+
+        char* pat_copy = malloc(plen + 1);
+        if (!pat_copy) {
+            continue;
+        }
+        memcpy(pat_copy, pattern, plen);
+        pat_copy[plen] = '\0';
+
+        if (!strchr(pat_copy, '/')) {
+            free(pat_copy);
+            continue;
+        }
+
+        char* dir_copy = strdup(rel);
+        if (!dir_copy) {
+            free(pat_copy);
+            continue;
+        }
+
+        char* dir_iter = dir_copy;
+        char* pat_iter = pat_copy;
+        char* dir_save = NULL;
+        char* pat_save = NULL;
+        char* dir_seg = NULL;
+        char* pat_seg = NULL;
+        int all_segments_match = 1;
+
+        while ((dir_seg = strtok_r(dir_iter, "/", &dir_save)) != NULL) {
+            dir_iter = NULL;
+            pat_seg = strtok_r(pat_iter, "/", &pat_save);
+            pat_iter = NULL;
+            if (!pat_seg || fnmatch(pat_seg, dir_seg, 0) != 0) {
+                all_segments_match = 0;
+                break;
+            }
+        }
+
+        if (all_segments_match && strtok_r(NULL, "/", &pat_save) != NULL) {
+            should_descend = 1;
+            free(dir_copy);
+            free(pat_copy);
+            break;
+        }
+
+        free(dir_copy);
+        free(pat_copy);
+    }
+
+    return should_descend;
 }
 
 int is_binary_file(const unsigned char* buffer, size_t bytes_read) {

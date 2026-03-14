@@ -15,7 +15,11 @@ static void cleanup_patterns(char*** patterns, size_t count) {
     *patterns = NULL;
 }
 
-int is_ignored(const char* filepath, char** patterns, size_t count, int is_dir) {
+int resolve_ignore_state(const char* filepath,
+                         char** patterns,
+                         size_t count,
+                         int is_dir,
+                         int initial_ignored) {
     if (!patterns) return 0;
 
     const char* rel = (strncmp(filepath, "./", 2) == 0) ? filepath + 2 : filepath;
@@ -24,7 +28,7 @@ int is_ignored(const char* filepath, char** patterns, size_t count, int is_dir) 
 
     char* scratch = NULL;
     size_t scratch_cap = 0;
-    int ignored = 0;
+    int ignored = initial_ignored;
     for (size_t i = 0; i < count; i++) {
         char* raw_pattern = patterns[i];
         size_t plen = strlen(raw_pattern);
@@ -77,6 +81,10 @@ int is_ignored(const char* filepath, char** patterns, size_t count, int is_dir) 
 
     free(scratch);
     return ignored;
+}
+
+int is_ignored(const char* filepath, char** patterns, size_t count, int is_dir) {
+    return resolve_ignore_state(filepath, patterns, count, is_dir, 0);
 }
 
 int load_ignore_patterns(const char* ignore_file, char*** patterns, size_t* count) {
