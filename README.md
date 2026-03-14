@@ -6,7 +6,7 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 
 - **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants and LLM-based coding workflows
 - Recursively scans the current directory for source code files
-- Can export Git-selected files via `--staged`, `--unstaged`, or `--diff <range>`
+- Git-aware file selection via `--staged`, `--unstaged`, or `--diff <range>`
 - Respects exclusions defined in a `.gitignore` file
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
@@ -45,7 +45,7 @@ make install PREFIX="$HOME/.local"
 
 ## Usage
 
-Simply run the executable in any directory you want to export:
+Run `fuori` in any directory you want to export:
 
 ```bash
 ./fuori
