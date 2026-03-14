@@ -4,7 +4,7 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 
 ## Features
 
-- **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants and LLM-based coding workflows
+- **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants
 - Recursively scans the current directory for source code files
 - Git-aware file selection via `--staged`, `--unstaged`, or `--diff <range>`
 - Respects exclusions defined in a `.gitignore` file
