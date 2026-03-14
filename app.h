@@ -26,7 +26,7 @@ typedef struct {
     size_t warn_tokens;
     size_t max_tokens;
     const char* output_path;
-    IgnorePattern* ignore_patterns;
+    struct IgnorePattern* ignore_patterns;
     size_t ignore_count;
     struct stat temp_stat;
     struct stat final_stat;
@@ -35,7 +35,9 @@ typedef struct {
 } AppContext;
 
 typedef enum {
-    FILE_SELECTION_RECURSIVE = 0,
+    FILE_SELECTION_AUTO = 0,
+    FILE_SELECTION_RECURSIVE,
+    FILE_SELECTION_GIT_WORKTREE,
     FILE_SELECTION_GIT_STAGED,
     FILE_SELECTION_GIT_UNSTAGED,
     FILE_SELECTION_GIT_DIFF

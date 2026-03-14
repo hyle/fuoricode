@@ -5,10 +5,10 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 ## Features
 
 - **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants
-- Recursively scans the current directory for source code files
-- Git-aware file selection via `--staged`, `--unstaged`, or `--diff <range>`
+- Auto-detects Git worktrees by default and falls back to recursive filesystem scanning elsewhere
+- Git-aware file selection via the default worktree mode, `--staged`, `--unstaged`, or `--diff <range>`
 - Includes a project tree that matches the exported artifact
-- Respects exclusions defined in a `.gitignore` file
+- Respects Git ignore rules in Git-backed modes and local ignore rules in filesystem mode
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
 - Formats code in Markdown with appropriate language identifiers
@@ -53,7 +53,7 @@ Run `fuori` in any directory you want to export:
 ./fuori
 ```
 
-By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format.
+By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format. Inside a Git repository, it prefers Git's view of the current subtree (tracked files plus untracked non-ignored files); outside a repository, or when you pass `--no-git`, it falls back to the recursive filesystem walker.
 
 ### Command Line Options
 
@@ -66,6 +66,7 @@ By default, the application creates a file named `_export.md` in the current dir
 - `-v, --verbose`: Show progress information during processing
 - `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
 - `-o, --output <path>`: Set output path (use `-` for stdout)
+- `--no-git`: Force recursive filesystem selection instead of the default auto-Git behavior
 - `--staged`: Export staged files from the current Git subtree
 - `--unstaged`: Export unstaged tracked files from the current Git subtree
 - `--diff <range>` / `--diff=<range>`: Export files changed by a Git diff range
@@ -77,12 +78,15 @@ By default, the application creates a file named `_export.md` in the current dir
 - `--no-clobber`: Fail if output file already exists
 - `-h, --help`: Display help message
 
-Git file-selection modes are mutually exclusive: use at most one of `--staged`, `--unstaged`, or `--diff`.
+Git file-selection modes are mutually exclusive: use at most one of `--staged`, `--unstaged`, or `--diff`. `--no-git` cannot be combined with those explicit Git selection flags.
 
 **Examples:**
 ```bash
 # Basic usage
 fuori
+
+# Force filesystem recursion even inside a Git repository
+fuori --no-git
 
 # Show version
 fuori --version
@@ -133,6 +137,7 @@ fuori --help
 ## .gitignore File
 
 You can create a `.gitignore` file in the directory to specify files and patterns to exclude from the export.
+These rules apply to the recursive filesystem walker, including `--no-git` mode and automatic fallback outside Git repositories.
 This tool supports common gitignore-style rules, including comments, `!` negation, trailing `/` for directories,
 root-anchored `/` patterns, and recursive `**` path globs such as `**/node_modules/` and `**/*.pyc`.
 
@@ -155,15 +160,20 @@ Files larger than the specified size limit (default 100KB) are automatically exc
 
 ## Git File Selection
 
+When you run `fuori` without file-selection flags inside a Git repository, it asks Git for the current subtree's tracked files plus untracked non-ignored files by running `git ls-files -z --cached --others --exclude-standard`. If Git is unavailable or the current directory is not inside a repository, `fuori` silently falls back to the recursive filesystem walker.
+
+Use `--no-git` to force the recursive filesystem walker even inside a Git repository.
+
 When you use `--staged`, `--unstaged`, or `--diff`, `fuori` asks Git for an explicit file list instead of recursively walking the tree.
 
+- Default mode uses tracked files plus untracked non-ignored files (`git ls-files -z --cached --others --exclude-standard`)
 - `--staged` uses staged files in `AMR` (`git diff --cached --name-only --diff-filter=AMR`)
 - `--unstaged` uses tracked unstaged files in `AMR` (`git diff --name-only --diff-filter=AMR`)
 - `--diff <range>` passes `<range>` directly to `git diff`, so both two-dot and three-dot ranges work, including examples like `HEAD~3..HEAD`, `main...HEAD`, and `v1.2.0..HEAD`
 
 Additional semantics:
 
-- Git file-selection modes are scoped to the current working directory subtree when run from a Git subdirectory
+- The default Git-backed mode and explicit Git file-selection modes are scoped to the current working directory subtree when run from a Git subdirectory
 - Git-selected files bypass selection-time ignore rules such as `.gitignore`
 - Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
 - `--unstaged` does not include untracked files

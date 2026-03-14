@@ -29,6 +29,8 @@ static int add_size(size_t* total, size_t amount) {
 
 static const char* export_description(FileSelectionMode mode) {
     switch (mode) {
+        case FILE_SELECTION_GIT_WORKTREE:
+            return "This document contains tracked files plus untracked, non-ignored files from the current Git subtree.\n\n";
         case FILE_SELECTION_GIT_STAGED:
             return "This document contains staged files selected from the current Git subtree.\n\n";
         case FILE_SELECTION_GIT_UNSTAGED:
@@ -36,6 +38,8 @@ static const char* export_description(FileSelectionMode mode) {
         case FILE_SELECTION_GIT_DIFF:
             return "This document contains files selected from the current Git subtree by the requested Git diff range.\n\n";
         case FILE_SELECTION_RECURSIVE:
+            return "This document contains all the source code files from the current directory subtree using the local filesystem walker.\n\n";
+        case FILE_SELECTION_AUTO:
         default:
             return "This document contains all the source code files from the current directory subtree.\n\n";
     }
