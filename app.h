@@ -12,6 +12,7 @@
 #define MAX_PATH_LENGTH PATH_MAX
 #define IGNORE_FILE ".gitignore"
 #define DEFAULT_OUTPUT_FILE "_export.md"
+#define DEFAULT_WARN_TOKENS 200000
 
 typedef struct {
     int verbose;
@@ -20,6 +21,8 @@ typedef struct {
     int show_tree;
     size_t max_file_size;
     size_t tree_depth;
+    size_t warn_tokens;
+    size_t max_tokens;
     const char* output_path;
     char** ignore_patterns;
     size_t ignore_count;

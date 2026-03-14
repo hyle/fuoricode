@@ -710,6 +710,7 @@ int collect_selected_export_plan(const SelectedPath* selected_paths,
             continue;
         }
 
+        /* Symlinks are skipped inside collect_exportable_file via the S_ISREG guard above. */
         if (collect_exportable_file(path->open_path, path->display_path, &st, ctx, 0, 0, plan) != 0) {
             return -1;
         }
