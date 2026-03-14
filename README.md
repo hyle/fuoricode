@@ -22,15 +22,18 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 - POSIX.1-2008 environment/APIs (project is built with `-D_POSIX_C_SOURCE=200809L`)
 - Unix-like environment (Linux, macOS, WSL, etc.)
 
-## Compilation
+## Install
+
+### Homebrew
 
 ```bash
-make
+brew tap hyle/tap
+brew install fuoricode
 ```
 
-This will create an executable named `fuori`.
+This installs the `fuori` command, with `fuoricode` also available as an alias.
 
-### Installation
+### From source
 
 ```bash
 # System-wide (often requires sudo)
@@ -39,11 +42,6 @@ make install PREFIX=/usr/local
 # User-local install
 make install PREFIX="$HOME/.local"
 ```
-
-### Source Files
-
-- `fuori.c`: Main program (CLI, traversal, export writer)
-- `ignore.c` / `ignore.h`: Ignore pattern loading and matching
 
 ## Usage
 
