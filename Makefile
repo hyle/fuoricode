@@ -20,4 +20,4 @@ install: $(TARGET)
 	install -d $(BINDIR)
 	install -m 755 $(TARGET) $(BINDIR)
 
-.PHONY: all clean test install
+.PHONY: all clean install
