@@ -12,13 +12,20 @@ typedef struct {
     size_t estimated_tokens;
 } ExportMetrics;
 
+typedef struct {
+    size_t* fence_lengths;
+    size_t count;
+} RenderPlanInfo;
+
+int prepare_render_plan(const ExportPlan* plan, RenderPlanInfo* info);
+void free_render_plan_info(RenderPlanInfo* info);
 int calculate_export_metrics(const ExportPlan* plan,
+                             const RenderPlanInfo* info,
                              FileSelectionMode mode,
                              int show_tree,
                              size_t tree_depth,
                              ExportMetrics* metrics);
 int write_export_header(FILE* out, FileSelectionMode mode);
-int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth);
-int render_export_plan(FILE* out, const ExportPlan* plan, int verbose);
+int render_export_plan(FILE* out, const ExportPlan* plan, const RenderPlanInfo* info, int verbose);
 
 #endif
