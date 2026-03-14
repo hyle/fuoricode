@@ -86,7 +86,6 @@ void free_names(char** names, size_t count);
 void free_selected_paths(SelectedPath* paths, size_t count);
 int is_likely_utf8(const unsigned char* s, size_t n);
 int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size);
-int should_descend_into_ignored_dir(const char* dirpath, char** patterns, size_t count);
 int run_command_capture(const char* const argv[],
                         unsigned char** output,
                         size_t* output_len,
@@ -452,16 +451,10 @@ int process_directory(const char* base_path,
                                                       1,
                                                       ancestor_ignored);
             if (dir_is_ignored) {
-                if (should_descend_into_ignored_dir(path, ctx->ignore_patterns, ctx->ignore_count)) {
-                    if (ctx->verbose) {
-                        fprintf(stderr, "Descending into ignored directory due to negated descendant pattern: %s\n", path);
-                    }
-                } else {
-                    if (ctx->verbose) {
-                        fprintf(stderr, "Skipping ignored directory: %s\n", path);
-                    }
-                    continue;
+                if (ctx->verbose) {
+                    fprintf(stderr, "Skipping ignored directory: %s\n", path);
                 }
+                continue;
             }
             // Recursively process subdirectory
             if (process_directory(path, output_file, ctx, dir_is_ignored) != 0) {
@@ -656,8 +649,7 @@ int process_file(const char* filepath,
         return -1;
     }
 
-    size_t sample_size = (bytes_read < 8192) ? bytes_read : 8192;
-    if (is_binary_file(buffer, sample_size)) {
+    if (is_binary_file(buffer, bytes_read)) {
         free(buffer);
         return 1;
     }
@@ -832,81 +824,6 @@ int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_s
     return 0;
 }
 
-int should_descend_into_ignored_dir(const char* dirpath, char** patterns, size_t count) {
-    if (!patterns) return 0;
-
-    const char* rel = (strncmp(dirpath, "./", 2) == 0) ? dirpath + 2 : dirpath;
-    if (*rel == '\0') return 0;
-
-    int should_descend = 0;
-    for (size_t i = 0; i < count; i++) {
-        const char* raw_pattern = patterns[i];
-        if (!raw_pattern || raw_pattern[0] != '!') {
-            continue;
-        }
-
-        const char* pattern = raw_pattern + 1;
-        while (*pattern == '/') {
-            pattern++;
-        }
-        size_t plen = strlen(pattern);
-        while (plen > 0 && pattern[plen - 1] == '/') {
-            plen--;
-        }
-        if (plen == 0) {
-            continue;
-        }
-
-        char* pat_copy = malloc(plen + 1);
-        if (!pat_copy) {
-            continue;
-        }
-        memcpy(pat_copy, pattern, plen);
-        pat_copy[plen] = '\0';
-
-        if (!strchr(pat_copy, '/')) {
-            free(pat_copy);
-            continue;
-        }
-
-        char* dir_copy = strdup(rel);
-        if (!dir_copy) {
-            free(pat_copy);
-            continue;
-        }
-
-        char* dir_iter = dir_copy;
-        char* pat_iter = pat_copy;
-        char* dir_save = NULL;
-        char* pat_save = NULL;
-        char* dir_seg = NULL;
-        char* pat_seg = NULL;
-        int all_segments_match = 1;
-
-        while ((dir_seg = strtok_r(dir_iter, "/", &dir_save)) != NULL) {
-            dir_iter = NULL;
-            pat_seg = strtok_r(pat_iter, "/", &pat_save);
-            pat_iter = NULL;
-            if (!pat_seg || fnmatch(pat_seg, dir_seg, 0) != 0) {
-                all_segments_match = 0;
-                break;
-            }
-        }
-
-        if (all_segments_match && strtok_r(NULL, "/", &pat_save) != NULL) {
-            should_descend = 1;
-            free(dir_copy);
-            free(pat_copy);
-            break;
-        }
-
-        free(dir_copy);
-        free(pat_copy);
-    }
-
-    return should_descend;
-}
-
 int is_binary_file(const unsigned char* buffer, size_t bytes_read) {
     if (bytes_read == 0) return 0; // Empty file is not binary
 
@@ -917,9 +834,9 @@ int is_binary_file(const unsigned char* buffer, size_t bytes_read) {
         }
     }
 
-    // If UTF-8, consider it text
-    if (is_likely_utf8(buffer, bytes_read)) {
-        return 0;
+    // Only export files whose bytes are valid UTF-8 to preserve UTF-8 output.
+    if (!is_likely_utf8(buffer, bytes_read)) {
+        return 1;
     }
 
     // Heuristic on control chars (excluding \t, \n, \r)
@@ -1430,8 +1347,8 @@ const char* get_language_identifier(const char* filepath, const unsigned char* b
     if (strcasecmp(base, "Makefile") == 0 || strcasecmp(base, "GNUmakefile") == 0) return "makefile";
 
     // Extract file extension
-    const char* dot = strrchr(filepath, '.');
-    if (!dot || dot == filepath) {
+    const char* dot = strrchr(base, '.');
+    if (!dot || dot == base) {
         // No extension found, try shebang detection
         return detect_shebang(buffer, buffer_len);
     }
@@ -1464,17 +1381,45 @@ int is_likely_utf8(const unsigned char* s, size_t n) {
             i++;
             continue;
         }
-        size_t need = 0;
-        if ((c & 0xE0) == 0xC0) need = 1;
-        else if ((c & 0xF0) == 0xE0) need = 2;
-        else if ((c & 0xF8) == 0xF0) need = 3;
-        else return 0;
-        // If the sample ends in a partial multibyte sequence, treat it as likely text.
-        if (i + need >= n) return 1;
-        for (size_t k = 1; k <= need; k++) {
-            if ((s[i+k] & 0xC0) != 0x80) return 0;
+        if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= n) return 0;
+            if ((s[i + 1] & 0xC0) != 0x80) return 0;
+            if (c < 0xC2) return 0;
+            i += 2;
+            continue;
         }
-        i += need + 1;
+        if ((c & 0xF0) == 0xE0) {
+            unsigned char b1;
+            unsigned char b2;
+            if (i + 2 >= n) return 0;
+            b1 = s[i + 1];
+            b2 = s[i + 2];
+            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return 0;
+            if (c == 0xE0 && b1 < 0xA0) return 0;
+            if (c == 0xED && b1 >= 0xA0) return 0;
+            i += 3;
+            continue;
+        }
+        if ((c & 0xF8) == 0xF0) {
+            unsigned char b1;
+            unsigned char b2;
+            unsigned char b3;
+            if (i + 3 >= n) return 0;
+            b1 = s[i + 1];
+            b2 = s[i + 2];
+            b3 = s[i + 3];
+            if ((b1 & 0xC0) != 0x80 ||
+                (b2 & 0xC0) != 0x80 ||
+                (b3 & 0xC0) != 0x80) {
+                return 0;
+            }
+            if (c == 0xF0 && b1 < 0x90) return 0;
+            if (c > 0xF4) return 0;
+            if (c == 0xF4 && b1 >= 0x90) return 0;
+            i += 4;
+            continue;
+        }
+        return 0;
     }
     return 1;
 }
