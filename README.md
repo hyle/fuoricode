@@ -1,21 +1,22 @@
 # fuoricode
 
-A C application that exports a codebase to a single markdown file with UTF-8 encoding.
+A C application that exports a codebase to a single Markdown file with UTF-8 encoding.
 
 ## Features
 
+- **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants and LLM-based coding workflows
 - Recursively scans the current directory for source code files
-- Respects exclusions defined in a `.gitignore` file
+- Respects exclusions defined in a .gitignore file
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
-- Formats code in markdown with appropriate language identifiers
-- Outputs to `_export.md` by default (configurable, including stdout)
+- Formats code in Markdown with appropriate language identifiers
+- Outputs to _export.md by default (configurable, including stdout)
 
 ## Requirements
 
-- C99 compiler (project is built with `-std=c99`)
-- POSIX.1-2008 environment/APIs (project is built with `-D_POSIX_C_SOURCE=200809L`)
-- Unix-like environment (Linux, macOS, etc.)
+- A C compiler supporting C99 (project is built with -std=c99)
+- POSIX.1-2008 environment/APIs (project is built with -D_POSIX_C_SOURCE=200809L)
+- Unix-like environment (Linux, macOS, WSL, etc.)
 
 ## Compilation
 
