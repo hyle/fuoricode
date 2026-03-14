@@ -51,14 +51,14 @@ int resolve_ignore_state(const char* filepath,
         const char* pat = pattern;
         if (pattern_is_dir_only) {
             if (plen > scratch_cap) {
-                char* new_scratch = realloc(scratch, plen);
+                char* new_scratch = realloc(scratch, plen + 1);
                 if (!new_scratch) {
                     free(scratch);
                     // Fail closed: if we cannot evaluate ignore patterns, exclude the path.
                     return 1;
                 }
                 scratch = new_scratch;
-                scratch_cap = plen;
+                scratch_cap = plen + 1;
             }
             memcpy(scratch, pattern, plen - 1);
             scratch[plen - 1] = '\0';
