@@ -62,6 +62,7 @@ By default, the application creates a file named `_export.md` in the current dir
 ```
 
 **Options:**
+- `-V, --version`: Show version information
 - `-v, --verbose`: Show progress information during processing
 - `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
 - `-o, --output <path>`: Set output path (use `-` for stdout)
@@ -82,6 +83,9 @@ Git file-selection modes are mutually exclusive: use at most one of `--staged`, 
 ```bash
 # Basic usage
 fuori
+
+# Show version
+fuori --version
 
 # With verbose output
 fuori -v

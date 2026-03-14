@@ -13,6 +13,10 @@
 #include "ignore.h"
 #include "render.h"
 
+#ifndef VERSION
+#define VERSION "dev"
+#endif
+
 static int parse_positive_size_value(const char* value,
                                      const char* label,
                                      size_t max_value,
@@ -42,6 +46,7 @@ static void print_usage(const char* argv0) {
     printf("Usage: %s [OPTIONS]\n", argv0);
     printf("Export codebase to markdown file.\n\n");
     printf("Options:\n");
+    printf("  -V, --version       Show version information\n");
     printf("  -v, --verbose       Show progress information\n");
     printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
     printf("  -o, --output        Set output path (use '-' for stdout)\n");
@@ -173,7 +178,10 @@ int main(int argc, char* argv[]) {
     temp_output_path[0] = '\0';
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+        if (strcmp(argv[i], "-V") == 0 || strcmp(argv[i], "--version") == 0) {
+            printf("fuori %s\n", VERSION);
+            return 0;
+        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             ctx.verbose = 1;
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 < argc) {

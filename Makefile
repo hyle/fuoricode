@@ -1,15 +1,17 @@
 CC = gcc
+CPPFLAGS += -DVERSION=\"$(VERSION)\"
 CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wwrite-strings -Wredundant-decls \
          -Wstrict-prototypes -Wold-style-definition -std=c99 -O2 -D_POSIX_C_SOURCE=200809L
 TARGET = fuori
 SOURCES = main.c collect.c render.c git_paths.c ignore.c
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
+VERSION ?= dev
 
 all: $(TARGET)
 
 $(TARGET): $(SOURCES)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
 clean:
 	rm -f $(TARGET)
