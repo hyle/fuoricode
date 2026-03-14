@@ -7,6 +7,7 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 - **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants
 - Recursively scans the current directory for source code files
 - Git-aware file selection via `--staged`, `--unstaged`, or `--diff <range>`
+- Includes a project tree that matches the exported artifact
 - Respects exclusions defined in a `.gitignore` file
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
@@ -66,6 +67,9 @@ By default, the application creates a file named `_export.md` in the current dir
 - `--staged`: Export staged files from the current Git subtree
 - `--unstaged`: Export unstaged tracked files from the current Git subtree
 - `--diff <range>` / `--diff=<range>`: Export files changed by a Git diff range
+- `--tree`: Include the project tree section (default)
+- `--no-tree`: Omit the project tree section
+- `--tree-depth <n>` / `--tree-depth=<n>`: Limit tree rendering depth to `n` levels
 - `--no-clobber`: Fail if output file already exists
 - `-h, --help`: Display help message
 
@@ -93,6 +97,12 @@ fuori -o codebase.md --no-clobber
 
 # Export staged files only
 fuori --staged
+
+# Export without the tree section
+fuori --no-tree
+
+# Export with a shallow tree
+fuori --tree-depth 2
 
 # Export unstaged tracked files only
 fuori --unstaged
@@ -157,12 +167,24 @@ Symbolic links are skipped to avoid recursion cycles.
 
 The output markdown file will contain:
 
-1. A header with the file path
-2. A code block with the file content
-3. Appropriate language identifiers for syntax highlighting
+1. A preamble describing the export mode
+2. A project tree section that reflects the exported artifact (enabled by default)
+3. A header with the file path
+4. A code block with the file content
+5. Appropriate language identifiers for syntax highlighting
 
 Example:
 ````markdown
+## Project Tree
+
+```text
+├── src
+│   ├── fuori.c
+│   └── ignore.c
+├── Makefile
+└── README.md
+```
+
 ## src/main.c
 
 ```c

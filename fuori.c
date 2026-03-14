@@ -22,13 +22,19 @@
 #define MAX_PATH_LENGTH PATH_MAX
 #define IGNORE_FILE ".gitignore"
 #define DEFAULT_OUTPUT_FILE "_export.md"
+#define TREE_BRANCH "\xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 "
+#define TREE_LAST "\xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 "
+#define TREE_PIPE "\xE2\x94\x82   "
+#define TREE_SPACE "    "
 
 // Application context structure to hold global state
 typedef struct {
     int verbose;
     int no_clobber;
     int output_is_stdout;
+    int show_tree;
     size_t max_file_size;
+    size_t tree_depth;
     const char* output_path;
     char** ignore_patterns;
     size_t ignore_count;
@@ -50,6 +56,20 @@ typedef struct {
     char* display_path;
 } SelectedPath;
 
+typedef struct {
+    char* open_path;
+    char* display_path;
+    struct stat st;
+} ExportPath;
+
+typedef struct TreeNode {
+    char* name;
+    int is_dir;
+    struct TreeNode** children;
+    size_t child_count;
+    size_t child_capacity;
+} TreeNode;
+
 // Function prototypes
 int is_binary_file(const unsigned char* buffer, size_t bytes_read);
 int should_exclude_file(const char* filepath,
@@ -59,31 +79,30 @@ int should_exclude_file(const char* filepath,
                         char** patterns,
                         size_t count);
 void sanitize_path(char* path);
-int process_directory(const char* base_path,
-                      FILE* output_file,
-                      AppContext* ctx,
-                      int ancestor_ignored);
 // Return codes: 0 = exported, 1 = skipped (binary/empty), -1 = error.
 int process_file(const char* filepath,
                  const char* display_path,
                  const struct stat* st,
                  size_t max_file_size,
                  FILE* output_file);
-int process_selected_paths(const SelectedPath* paths,
-                           size_t count,
-                           FILE* output_file,
-                           AppContext* ctx);
+int process_export_paths(const ExportPath* paths,
+                         size_t count,
+                         FILE* output_file,
+                         AppContext* ctx);
 const char* get_language_identifier(const char* filepath, const unsigned char* buffer, size_t buffer_len);
 const char* detect_shebang(const unsigned char* buffer, size_t buffer_len);
 int write_fence(FILE* out, size_t count, const char* lang);
 int write_text(FILE* out, const char* text);
 int write_bytes(FILE* out, const void* data, size_t len);
+int write_visible_text(FILE* out, const char* text);
 int write_markdown_path(FILE* out, const char* path);
 int write_export_header(FILE* out, FileSelectionMode mode);
 int compare_names(const void* lhs, const void* rhs);
 int compare_selected_paths(const void* lhs, const void* rhs);
+int compare_export_paths(const void* lhs, const void* rhs);
 void free_names(char** names, size_t count);
 void free_selected_paths(SelectedPath* paths, size_t count);
+void free_export_paths(ExportPath* paths, size_t count);
 int is_likely_utf8(const unsigned char* s, size_t n);
 int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size);
 int run_command_capture(const char* const argv[],
@@ -96,6 +115,51 @@ int collect_git_paths(FileSelectionMode mode,
                       const char* diff_range,
                       SelectedPath** paths_out,
                       size_t* count_out);
+int read_file_buffer(const char* filepath,
+                     const struct stat* st,
+                     size_t max_file_size,
+                     unsigned char** buffer_out,
+                     size_t* bytes_read_out);
+int probe_file_for_export(const char* filepath,
+                          const struct stat* st,
+                          size_t max_file_size);
+int append_export_path(ExportPath** paths,
+                       size_t* count,
+                       size_t* capacity,
+                       const char* open_path,
+                       const char* display_path,
+                       const struct stat* st);
+int collect_exportable_file(const char* open_path,
+                            const char* display_path,
+                            const struct stat* st,
+                            AppContext* ctx,
+                            int ancestor_ignored,
+                            int respect_ignore,
+                            ExportPath** paths,
+                            size_t* count,
+                            size_t* capacity);
+int collect_recursive_paths(const char* base_path,
+                            AppContext* ctx,
+                            int ancestor_ignored,
+                            ExportPath** paths,
+                            size_t* count,
+                            size_t* capacity);
+int collect_selected_export_paths(const SelectedPath* selected_paths,
+                                  size_t selected_count,
+                                  AppContext* ctx,
+                                  ExportPath** paths_out,
+                                  size_t* count_out);
+TreeNode* tree_node_create(const char* name, int is_dir);
+void free_tree(TreeNode* node);
+int tree_add_path(TreeNode* root, const char* display_path);
+void sort_tree(TreeNode* node);
+int write_project_tree(FILE* out, const ExportPath* paths, size_t count, size_t max_depth);
+int write_tree_children(FILE* out,
+                        const TreeNode* node,
+                        const char* prefix,
+                        size_t depth,
+                        size_t max_depth);
+int compare_tree_nodes(const void* lhs, const void* rhs);
 
 int main(int argc, char* argv[]) {
     AppContext ctx = {0};
@@ -103,12 +167,17 @@ int main(int argc, char* argv[]) {
     const char* diff_range = NULL;
     SelectedPath* selected_paths = NULL;
     size_t selected_count = 0;
+    ExportPath* export_paths = NULL;
+    size_t export_count = 0;
+    size_t export_capacity = 0;
     int status = 1;
     int temp_created = 0;
     int output_needs_close = 0;
     FILE* output_file = NULL;
     char temp_output_path[MAX_PATH_LENGTH];
     ctx.max_file_size = MAX_FILE_SIZE;  // Default value
+    ctx.show_tree = 1;
+    ctx.tree_depth = SIZE_MAX;
     ctx.output_path = DEFAULT_OUTPUT_FILE;
     temp_output_path[0] = '\0';
 
@@ -156,6 +225,38 @@ int main(int argc, char* argv[]) {
             ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
         } else if (strcmp(argv[i], "--no-clobber") == 0) {
             ctx.no_clobber = 1;
+        } else if (strcmp(argv[i], "--tree") == 0) {
+            ctx.show_tree = 1;
+        } else if (strcmp(argv[i], "--no-tree") == 0) {
+            ctx.show_tree = 0;
+        } else if (strcmp(argv[i], "--tree-depth") == 0) {
+            if (i + 1 < argc) {
+                char* endptr;
+                errno = 0;
+                unsigned long long depth = strtoull(argv[++i], &endptr, 10);
+                if (*endptr == '\0' && depth > 0 && errno != ERANGE && depth <= SIZE_MAX) {
+                    ctx.tree_depth = (size_t)depth;
+                } else {
+                    fprintf(stderr, "Invalid tree depth value: %s\n", argv[i]);
+                    fprintf(stderr, "Use -h or --help for usage information\n");
+                    return 1;
+                }
+            } else {
+                fprintf(stderr, "Missing value for --tree-depth option\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+        } else if (strncmp(argv[i], "--tree-depth=", 13) == 0) {
+            char* endptr;
+            errno = 0;
+            unsigned long long depth = strtoull(argv[i] + 13, &endptr, 10);
+            if (*endptr == '\0' && depth > 0 && errno != ERANGE && depth <= SIZE_MAX) {
+                ctx.tree_depth = (size_t)depth;
+            } else {
+                fprintf(stderr, "Invalid tree depth value: %s\n", argv[i] + 13);
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--staged") == 0) {
             if (selection_mode != FILE_SELECTION_RECURSIVE) {
                 fprintf(stderr, "File-selection flags are mutually exclusive\n");
@@ -210,6 +311,9 @@ int main(int argc, char* argv[]) {
             printf("      --unstaged   Export unstaged tracked files from the current Git subtree\n");
             printf("      --diff <r>   Export files changed by a git diff range (for example main...HEAD)\n");
             printf("                   Git file-selection flags are mutually exclusive\n");
+            printf("      --tree       Include a directory tree section (default)\n");
+            printf("      --no-tree    Omit the directory tree section\n");
+            printf("      --tree-depth Limit tree rendering depth to N levels\n");
             printf("      --no-clobber Fail if output file already exists\n");
             printf("  -h, --help       Show this help message\n");
             return 0;
@@ -290,15 +394,27 @@ int main(int argc, char* argv[]) {
     }
 
     if (selection_mode == FILE_SELECTION_RECURSIVE) {
-        if (process_directory(".", output_file, &ctx, 0) != 0) {
-            fprintf(stderr, "Error processing directory\n");
+        if (collect_recursive_paths(".", &ctx, 0, &export_paths, &export_count, &export_capacity) != 0) {
+            fprintf(stderr, "Error collecting directory entries\n");
             goto cleanup;
         }
     } else {
-        if (process_selected_paths(selected_paths, selected_count, output_file, &ctx) != 0) {
-            fprintf(stderr, "Error processing selected files\n");
+        if (collect_selected_export_paths(selected_paths, selected_count, &ctx, &export_paths, &export_count) != 0) {
+            fprintf(stderr, "Error collecting selected files\n");
             goto cleanup;
         }
+    }
+
+    if (ctx.show_tree) {
+        if (write_project_tree(output_file, export_paths, export_count, ctx.tree_depth) != 0) {
+            perror("Error writing project tree");
+            goto cleanup;
+        }
+    }
+
+    if (process_export_paths(export_paths, export_count, output_file, &ctx) != 0) {
+        fprintf(stderr, "Error processing export files\n");
+        goto cleanup;
     }
 
     if (fflush(output_file) != 0) {
@@ -336,15 +452,274 @@ cleanup:
     if (temp_created && temp_output_path[0] != '\0') {
         unlink(temp_output_path);
     }
+    free_export_paths(export_paths, export_count);
     free_selected_paths(selected_paths, selected_count);
     free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
     return status;
 }
 
-int process_directory(const char* base_path,
-                      FILE* output_file,
-                      AppContext* ctx,
-                      int ancestor_ignored) {
+int append_export_path(ExportPath** paths,
+                       size_t* count,
+                       size_t* capacity,
+                       const char* open_path,
+                       const char* display_path,
+                       const struct stat* st) {
+    if (*count == *capacity) {
+        size_t new_capacity = (*capacity == 0) ? 32 : (*capacity) * 2;
+        ExportPath* new_paths = realloc(*paths, new_capacity * sizeof(*new_paths));
+        if (!new_paths) {
+            perror("Error growing export path list");
+            return -1;
+        }
+        *paths = new_paths;
+        *capacity = new_capacity;
+    }
+
+    const char* normalized_display = display_path;
+    if (normalized_display && strncmp(normalized_display, "./", 2) == 0) {
+        normalized_display += 2;
+    }
+
+    (*paths)[*count].open_path = strdup(open_path);
+    if (!(*paths)[*count].open_path) {
+        perror("Error duplicating export path");
+        return -1;
+    }
+    (*paths)[*count].display_path = strdup(normalized_display ? normalized_display : open_path);
+    if (!(*paths)[*count].display_path) {
+        perror("Error duplicating display path");
+        free((*paths)[*count].open_path);
+        (*paths)[*count].open_path = NULL;
+        return -1;
+    }
+    (*paths)[*count].st = *st;
+    (*count)++;
+    return 0;
+}
+
+int read_file_buffer(const char* filepath,
+                     const struct stat* st,
+                     size_t max_file_size,
+                     unsigned char** buffer_out,
+                     size_t* bytes_read_out) {
+    int fd = -1;
+    FILE* file = NULL;
+    unsigned char* buffer = NULL;
+    size_t buffer_size = 0;
+    size_t buffer_capacity = 0;
+    size_t extra_read = 0;
+    size_t bytes_read = 0;
+    unsigned char extra_chunk[4096];
+    struct stat opened_st;
+
+    *buffer_out = NULL;
+    *bytes_read_out = 0;
+
+    if (st->st_size < 0) {
+        errno = EINVAL;
+        perror("Invalid file size");
+        return -1;
+    }
+
+    int open_flags = O_RDONLY;
+#ifdef O_NOFOLLOW
+    open_flags |= O_NOFOLLOW;
+#endif
+    fd = open(filepath, open_flags);
+    if (fd == -1) {
+        perror("Error opening file");
+        return -1;
+    }
+    if (fstat(fd, &opened_st) == -1) {
+        close(fd);
+        perror("Error stating opened file");
+        return -1;
+    }
+    if (!S_ISREG(opened_st.st_mode)) {
+        close(fd);
+        errno = EINVAL;
+        perror("Opened path is not a regular file");
+        return -1;
+    }
+    if (opened_st.st_dev != st->st_dev || opened_st.st_ino != st->st_ino) {
+        close(fd);
+        errno = EAGAIN;
+        perror("File changed while being processed");
+        return -1;
+    }
+    if (opened_st.st_size < 0) {
+        close(fd);
+        errno = EINVAL;
+        perror("Invalid opened file size");
+        return -1;
+    }
+    if ((size_t)opened_st.st_size > max_file_size) {
+        close(fd);
+        return 1;
+    }
+
+    file = fdopen(fd, "rb");
+    if (!file) {
+        close(fd);
+        perror("Error converting file descriptor to stream");
+        return -1;
+    }
+    fd = -1;
+
+    buffer_size = (size_t)opened_st.st_size;
+    buffer_capacity = (buffer_size > 0) ? buffer_size : sizeof(extra_chunk);
+    buffer = malloc(buffer_capacity);
+    if (!buffer) {
+        fclose(file);
+        perror("Error allocating memory");
+        return -1;
+    }
+
+    if (buffer_size > 0) {
+        bytes_read = fread(buffer, 1, buffer_size, file);
+        if (bytes_read < buffer_size && ferror(file)) {
+            free(buffer);
+            fclose(file);
+            perror("Error reading file");
+            return -1;
+        }
+    }
+
+    while ((extra_read = fread(extra_chunk, 1, sizeof(extra_chunk), file)) > 0) {
+        if (bytes_read + extra_read < bytes_read) {
+            free(buffer);
+            fclose(file);
+            errno = EOVERFLOW;
+            perror("File too large");
+            return -1;
+        }
+        size_t needed = bytes_read + extra_read;
+        if (needed > max_file_size) {
+            free(buffer);
+            fclose(file);
+            return 1;
+        }
+        if (needed > buffer_capacity) {
+            size_t new_capacity = buffer_capacity;
+            while (new_capacity < needed) {
+                if (new_capacity > SIZE_MAX / 2) {
+                    new_capacity = needed;
+                    break;
+                }
+                new_capacity *= 2;
+            }
+
+            unsigned char* new_buffer = realloc(buffer, new_capacity);
+            if (!new_buffer) {
+                free(buffer);
+                fclose(file);
+                perror("Error growing file buffer");
+                return -1;
+            }
+            buffer = new_buffer;
+            buffer_capacity = new_capacity;
+        }
+        memcpy(buffer + bytes_read, extra_chunk, extra_read);
+        bytes_read += extra_read;
+    }
+    if (ferror(file)) {
+        free(buffer);
+        fclose(file);
+        perror("Error reading file");
+        return -1;
+    }
+    if (fclose(file) != 0) {
+        free(buffer);
+        perror("Error closing file");
+        return -1;
+    }
+
+    *buffer_out = buffer;
+    *bytes_read_out = bytes_read;
+    return 0;
+}
+
+int probe_file_for_export(const char* filepath,
+                          const struct stat* st,
+                          size_t max_file_size) {
+    unsigned char* buffer = NULL;
+    size_t bytes_read = 0;
+    int result = read_file_buffer(filepath, st, max_file_size, &buffer, &bytes_read);
+    if (result != 0) {
+        return result;
+    }
+
+    if (bytes_read == 0 || is_binary_file(buffer, bytes_read)) {
+        free(buffer);
+        return 1;
+    }
+
+    free(buffer);
+    return 0;
+}
+
+int collect_exportable_file(const char* open_path,
+                            const char* display_path,
+                            const struct stat* st,
+                            AppContext* ctx,
+                            int ancestor_ignored,
+                            int respect_ignore,
+                            ExportPath** paths,
+                            size_t* count,
+                            size_t* capacity) {
+    if (!S_ISREG(st->st_mode)) {
+        return 0;
+    }
+
+    if ((ctx->have_temp &&
+         st->st_dev == ctx->temp_stat.st_dev && st->st_ino == ctx->temp_stat.st_ino) ||
+        (ctx->have_final &&
+         st->st_dev == ctx->final_stat.st_dev && st->st_ino == ctx->final_stat.st_ino)) {
+        return 0;
+    }
+
+    if (respect_ignore) {
+        if (should_exclude_file(open_path,
+                                st,
+                                ctx->max_file_size,
+                                ancestor_ignored,
+                                ctx->ignore_patterns,
+                                ctx->ignore_count)) {
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping file: %s\n", display_path);
+            }
+            return 0;
+        }
+    } else {
+        if (st->st_size < 0 || (size_t)st->st_size > ctx->max_file_size) {
+            return 0;
+        }
+    }
+
+    int probe = probe_file_for_export(open_path, st, ctx->max_file_size);
+    if (probe == 1) {
+        if (ctx->verbose) {
+            fprintf(stderr, "Skipping binary/empty file: %s\n", display_path);
+        }
+        return 0;
+    }
+    if (probe != 0) {
+        fprintf(stderr, "Warning: Failed to process file %s\n", display_path);
+        return 0;
+    }
+
+    if (ctx->verbose) {
+        fprintf(stderr, "Queued file: %s\n", display_path);
+    }
+    return append_export_path(paths, count, capacity, open_path, display_path, st);
+}
+
+int collect_recursive_paths(const char* base_path,
+                            AppContext* ctx,
+                            int ancestor_ignored,
+                            ExportPath** paths,
+                            size_t* count,
+                            size_t* capacity) {
     DIR* dir = NULL;
     struct dirent* entry;
     char path[MAX_PATH_LENGTH];
@@ -412,14 +787,14 @@ int process_directory(const char* base_path,
         const char* name = names[i];
 
         // Construct full path
-            int path_len = snprintf(path, sizeof(path), "%s/%s", base_path, name);
-            if (path_len < 0 || (size_t)path_len >= sizeof(path)) {
-                if (ctx->verbose) {
-                    fprintf(stderr, "Skipping path that exceeds %zu bytes: %s/%s\n",
-                            (size_t)MAX_PATH_LENGTH, base_path, name);
-                }
-                continue;
+        int path_len = snprintf(path, sizeof(path), "%s/%s", base_path, name);
+        if (path_len < 0 || (size_t)path_len >= sizeof(path)) {
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping path that exceeds %zu bytes: %s/%s\n",
+                        (size_t)MAX_PATH_LENGTH, base_path, name);
             }
+            continue;
+        }
         sanitize_path(path);
 
         struct stat st;
@@ -457,36 +832,22 @@ int process_directory(const char* base_path,
                 continue;
             }
             // Recursively process subdirectory
-            if (process_directory(path, output_file, ctx, dir_is_ignored) != 0) {
+            if (collect_recursive_paths(path, ctx, dir_is_ignored, paths, count, capacity) != 0) {
                 status = -1;
                 goto cleanup;
             }
         } else if (S_ISREG(st.st_mode)) {
-            // Process regular file
-            if (!should_exclude_file(path,
-                                     &st,
-                                     ctx->max_file_size,
-                                     ancestor_ignored,
-                                     ctx->ignore_patterns,
-                                     ctx->ignore_count)) {
-                if (ctx->verbose) {
-                    fprintf(stderr, "Processing file: %s\n", path);
-                }
-                int result = process_file(path, path, &st, ctx->max_file_size, output_file);
-                if (result == 1) {
-                    if (ctx->verbose) {
-                        fprintf(stderr, "Skipping binary/empty file: %s\n", path);
-                    }
-                } else if (result != 0) {
-                    if (ferror(output_file)) {
-                        perror("Error writing export output");
-                        status = -1;
-                        goto cleanup;
-                    }
-                    fprintf(stderr, "Warning: Failed to process file %s\n", path);
-                }
-            } else if (ctx->verbose) {
-                fprintf(stderr, "Skipping file: %s\n", path);
+            if (collect_exportable_file(path,
+                                        path,
+                                        &st,
+                                        ctx,
+                                        ancestor_ignored,
+                                        1,
+                                        paths,
+                                        count,
+                                        capacity) != 0) {
+                status = -1;
+                goto cleanup;
             }
         }
     }
@@ -510,14 +871,8 @@ int process_file(const char* filepath,
     size_t current_run = 0;
     size_t fence = 3;
     const char* lang = NULL;
-    int fd = -1;
-    FILE* file = NULL;
     unsigned char* buffer = NULL;
-    size_t buffer_size = 0;
-    size_t buffer_capacity = 0;
-    size_t extra_read = 0;
-    unsigned char extra_chunk[4096];
-    struct stat opened_st;
+    size_t bytes_read = 0;
 
     // Normalize heading by removing leading "./"
     const char* display = display_path;
@@ -526,127 +881,9 @@ int process_file(const char* filepath,
     } else if (strncmp(display, "./", 2) == 0) {
         display += 2;
     }
-    if (st->st_size < 0) {
-        errno = EINVAL;
-        perror("Invalid file size");
-        return -1;
-    }
-
-    int open_flags = O_RDONLY;
-#ifdef O_NOFOLLOW
-    open_flags |= O_NOFOLLOW;
-#endif
-    fd = open(filepath, open_flags);
-    if (fd == -1) {
-        free(buffer);
-        perror("Error opening file");
-        return -1;
-    }
-    if (fstat(fd, &opened_st) == -1) {
-        free(buffer);
-        close(fd);
-        perror("Error stating opened file");
-        return -1;
-    }
-    if (!S_ISREG(opened_st.st_mode)) {
-        free(buffer);
-        close(fd);
-        errno = EINVAL;
-        perror("Opened path is not a regular file");
-        return -1;
-    }
-    if (opened_st.st_dev != st->st_dev || opened_st.st_ino != st->st_ino) {
-        close(fd);
-        errno = EAGAIN;
-        perror("File changed while being processed");
-        return -1;
-    }
-    if (opened_st.st_size < 0) {
-        close(fd);
-        errno = EINVAL;
-        perror("Invalid opened file size");
-        return -1;
-    }
-    if ((size_t)opened_st.st_size > max_file_size) {
-        close(fd);
-        return 1;
-    }
-
-    file = fdopen(fd, "rb");
-    if (!file) {
-        close(fd);
-        perror("Error converting file descriptor to stream");
-        return -1;
-    }
-    fd = -1;
-
-    buffer_size = (size_t)opened_st.st_size;
-    buffer_capacity = (buffer_size > 0) ? buffer_size : sizeof(extra_chunk);
-    buffer = malloc(buffer_capacity);
-    if (!buffer) {
-        fclose(file);
-        perror("Error allocating memory");
-        return -1;
-    }
-
-    size_t bytes_read = 0;
-    if (buffer_size > 0) {
-        bytes_read = fread(buffer, 1, buffer_size, file);
-        if (bytes_read < buffer_size && ferror(file)) {
-            free(buffer);
-            fclose(file);
-            perror("Error reading file");
-            return -1;
-        }
-    }
-
-    while ((extra_read = fread(extra_chunk, 1, sizeof(extra_chunk), file)) > 0) {
-        if (bytes_read + extra_read < bytes_read) {
-            free(buffer);
-            fclose(file);
-            errno = EOVERFLOW;
-            perror("File too large");
-            return -1;
-        }
-        size_t needed = bytes_read + extra_read;
-        if (needed > max_file_size) {
-            free(buffer);
-            fclose(file);
-            return 1;
-        }
-        if (needed > buffer_capacity) {
-            size_t new_capacity = buffer_capacity;
-            while (new_capacity < needed) {
-                if (new_capacity > SIZE_MAX / 2) {
-                    new_capacity = needed;
-                    break;
-                }
-                new_capacity *= 2;
-            }
-
-            unsigned char* new_buffer = realloc(buffer, new_capacity);
-            if (!new_buffer) {
-                free(buffer);
-                fclose(file);
-                perror("Error growing file buffer");
-                return -1;
-            }
-            buffer = new_buffer;
-            buffer_capacity = new_capacity;
-        }
-        memcpy(buffer + bytes_read, extra_chunk, extra_read);
-        bytes_read += extra_read;
-    }
-    if (ferror(file)) {
-        free(buffer);
-        fclose(file);
-        perror("Error reading file");
-        return -1;
-    }
-    if (fclose(file) != 0) {
-        free(buffer);
-        perror("Error closing file");
-        return -1;
+    int read_result = read_file_buffer(filepath, st, max_file_size, &buffer, &bytes_read);
+    if (read_result != 0) {
+        return read_result;
     }
 
     if (is_binary_file(buffer, bytes_read)) {
@@ -706,17 +943,21 @@ int process_file(const char* filepath,
     return 0;
 }
 
-int process_selected_paths(const SelectedPath* paths,
-                           size_t count,
-                           FILE* output_file,
-                           AppContext* ctx) {
-    for (size_t i = 0; i < count; i++) {
-        const SelectedPath* path = &paths[i];
-        struct stat st;
+int collect_selected_export_paths(const SelectedPath* selected_paths,
+                                  size_t selected_count,
+                                  AppContext* ctx,
+                                  ExportPath** paths_out,
+                                  size_t* count_out) {
+    ExportPath* paths = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
 
-        if (ctx->verbose) {
-            fprintf(stderr, "Processing selected file: %s\n", path->display_path);
-        }
+    *paths_out = NULL;
+    *count_out = 0;
+
+    for (size_t i = 0; i < selected_count; i++) {
+        const SelectedPath* path = &selected_paths[i];
+        struct stat st;
 
         if (lstat(path->open_path, &st) == -1) {
             if (errno == ENOENT) {
@@ -730,20 +971,43 @@ int process_selected_paths(const SelectedPath* paths,
             continue;
         }
 
-        if ((ctx->have_temp &&
-             st.st_dev == ctx->temp_stat.st_dev && st.st_ino == ctx->temp_stat.st_ino) ||
-            (ctx->have_final &&
-             st.st_dev == ctx->final_stat.st_dev && st.st_ino == ctx->final_stat.st_ino)) {
-            continue;
+        if (collect_exportable_file(path->open_path,
+                                    path->display_path,
+                                    &st,
+                                    ctx,
+                                    0,
+                                    0,
+                                    &paths,
+                                    &count,
+                                    &capacity) != 0) {
+            free_export_paths(paths, count);
+            return -1;
         }
+    }
 
-        if (st.st_size < 0 || (size_t)st.st_size > ctx->max_file_size) {
-            continue;
+    if (count > 1) {
+        qsort(paths, count, sizeof(*paths), compare_export_paths);
+    }
+
+    *paths_out = paths;
+    *count_out = count;
+    return 0;
+}
+
+int process_export_paths(const ExportPath* paths,
+                         size_t count,
+                         FILE* output_file,
+                         AppContext* ctx) {
+    for (size_t i = 0; i < count; i++) {
+        const ExportPath* path = &paths[i];
+
+        if (ctx->verbose) {
+            fprintf(stderr, "Processing file: %s\n", path->display_path);
         }
 
         int result = process_file(path->open_path,
                                   path->display_path,
-                                  &st,
+                                  &path->st,
                                   ctx->max_file_size,
                                   output_file);
         if (result == 1) {
@@ -883,6 +1147,36 @@ int write_bytes(FILE* out, const void* data, size_t len) {
     return (fwrite(data, 1, len, out) == len) ? 0 : -1;
 }
 
+int write_visible_text(FILE* out, const char* text) {
+    for (const unsigned char* p = (const unsigned char*)text; *p != '\0'; p++) {
+        unsigned char c = *p;
+        if (c == '\n') {
+            if (write_text(out, "\\n") != 0) return -1;
+            continue;
+        }
+        if (c == '\r') {
+            if (write_text(out, "\\r") != 0) return -1;
+            continue;
+        }
+        if (c == '\t') {
+            if (write_text(out, "\\t") != 0) return -1;
+            continue;
+        }
+        if ((c < 0x20 || c == 0x7f)) {
+            char escaped[5];
+            if (snprintf(escaped, sizeof(escaped), "\\x%02X", c) < 0 ||
+                write_text(out, escaped) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (fputc(c, out) == EOF) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int write_markdown_path(FILE* out, const char* path) {
     static const char markdown_meta[] = "\\`*_{}[]()#+-.!|>";
 
@@ -956,6 +1250,25 @@ int compare_selected_paths(const void* lhs, const void* rhs) {
     return strcmp(left->open_path, right->open_path);
 }
 
+int compare_export_paths(const void* lhs, const void* rhs) {
+    const ExportPath* left = lhs;
+    const ExportPath* right = rhs;
+    int display_cmp = strcmp(left->display_path, right->display_path);
+    if (display_cmp != 0) {
+        return display_cmp;
+    }
+    return strcmp(left->open_path, right->open_path);
+}
+
+int compare_tree_nodes(const void* lhs, const void* rhs) {
+    const TreeNode* const* left = lhs;
+    const TreeNode* const* right = rhs;
+    if ((*left)->is_dir != (*right)->is_dir) {
+        return (*right)->is_dir - (*left)->is_dir;
+    }
+    return strcmp((*left)->name, (*right)->name);
+}
+
 void free_names(char** names, size_t count) {
     if (!names) return;
     for (size_t i = 0; i < count; i++) {
@@ -971,6 +1284,174 @@ void free_selected_paths(SelectedPath* paths, size_t count) {
         free(paths[i].display_path);
     }
     free(paths);
+}
+
+void free_export_paths(ExportPath* paths, size_t count) {
+    if (!paths) return;
+    for (size_t i = 0; i < count; i++) {
+        free(paths[i].open_path);
+        free(paths[i].display_path);
+    }
+    free(paths);
+}
+
+TreeNode* tree_node_create(const char* name, int is_dir) {
+    TreeNode* node = calloc(1, sizeof(*node));
+    if (!node) {
+        return NULL;
+    }
+
+    node->name = strdup(name ? name : "");
+    if (!node->name) {
+        free(node);
+        return NULL;
+    }
+    node->is_dir = is_dir;
+    return node;
+}
+
+void free_tree(TreeNode* node) {
+    if (!node) return;
+    for (size_t i = 0; i < node->child_count; i++) {
+        free_tree(node->children[i]);
+    }
+    free(node->children);
+    free(node->name);
+    free(node);
+}
+
+int tree_add_path(TreeNode* root, const char* display_path) {
+    char* path_copy = strdup(display_path);
+    if (!path_copy) {
+        return -1;
+    }
+
+    TreeNode* current = root;
+    char* saveptr = NULL;
+    char* token = strtok_r(path_copy, "/", &saveptr);
+    while (token) {
+        char* next = strtok_r(NULL, "/", &saveptr);
+        int is_dir = (next != NULL);
+        TreeNode* child = NULL;
+
+        for (size_t i = 0; i < current->child_count; i++) {
+            if (strcmp(current->children[i]->name, token) == 0) {
+                child = current->children[i];
+                break;
+            }
+        }
+
+        if (!child) {
+            if (current->child_count == current->child_capacity) {
+                size_t new_capacity = (current->child_capacity == 0) ? 8 : current->child_capacity * 2;
+                TreeNode** new_children = realloc(current->children, new_capacity * sizeof(*new_children));
+                if (!new_children) {
+                    free(path_copy);
+                    return -1;
+                }
+                current->children = new_children;
+                current->child_capacity = new_capacity;
+            }
+
+            child = tree_node_create(token, is_dir);
+            if (!child) {
+                free(path_copy);
+                return -1;
+            }
+            current->children[current->child_count++] = child;
+        } else if (is_dir) {
+            child->is_dir = 1;
+        }
+
+        current = child;
+        token = next;
+    }
+
+    free(path_copy);
+    return 0;
+}
+
+void sort_tree(TreeNode* node) {
+    if (!node) return;
+    if (node->child_count > 1) {
+        qsort(node->children, node->child_count, sizeof(*node->children), compare_tree_nodes);
+    }
+    for (size_t i = 0; i < node->child_count; i++) {
+        sort_tree(node->children[i]);
+    }
+}
+
+int write_tree_children(FILE* out,
+                        const TreeNode* node,
+                        const char* prefix,
+                        size_t depth,
+                        size_t max_depth) {
+    for (size_t i = 0; i < node->child_count; i++) {
+        const TreeNode* child = node->children[i];
+        int is_last = (i + 1 == node->child_count);
+
+        if (write_text(out, prefix) != 0 ||
+            write_text(out, is_last ? TREE_LAST : TREE_BRANCH) != 0 ||
+            write_visible_text(out, child->name) != 0 ||
+            write_text(out, "\n") != 0) {
+            return -1;
+        }
+
+        if (child->is_dir &&
+            child->child_count > 0 &&
+            (max_depth == SIZE_MAX || depth < max_depth)) {
+            const char* segment = is_last ? TREE_SPACE : TREE_PIPE;
+            size_t prefix_len = strlen(prefix);
+            size_t segment_len = strlen(segment);
+            char* next_prefix = malloc(prefix_len + segment_len + 1);
+            if (!next_prefix) {
+                return -1;
+            }
+            memcpy(next_prefix, prefix, prefix_len);
+            memcpy(next_prefix + prefix_len, segment, segment_len + 1);
+
+            int result = write_tree_children(out, child, next_prefix, depth + 1, max_depth);
+            free(next_prefix);
+            if (result != 0) {
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+int write_project_tree(FILE* out, const ExportPath* paths, size_t count, size_t max_depth) {
+    TreeNode* root = tree_node_create("", 1);
+    if (!root) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        if (tree_add_path(root, paths[i].display_path) != 0) {
+            free_tree(root);
+            return -1;
+        }
+    }
+    sort_tree(root);
+
+    if (write_text(out, "## Project Tree\n\n```text\n") != 0) {
+        free_tree(root);
+        return -1;
+    }
+
+    if (root->child_count == 0) {
+        if (write_text(out, "(no exported files)\n") != 0) {
+            free_tree(root);
+            return -1;
+        }
+    } else if (write_tree_children(out, root, "", 1, max_depth) != 0) {
+        free_tree(root);
+        return -1;
+    }
+
+    free_tree(root);
+    return write_text(out, "```\n\n");
 }
 
 int run_command_capture(const char* const argv[],
