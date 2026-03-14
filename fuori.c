@@ -999,6 +999,13 @@ int run_command_capture(const char* const argv[],
         close(stdout_pipe[1]);
         return -1;
     }
+    if (fcntl(error_pipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
 
     pid = fork();
     if (pid == -1) {
@@ -1424,7 +1431,22 @@ int is_likely_utf8(const unsigned char* s, size_t n) {
     return 1;
 }
 
+static const char* classify_shebang_interpreter(const char* name) {
+    if (!name || *name == '\0') return NULL;
+
+    if (strcmp(name, "python") == 0 || strcmp(name, "python3") == 0) return "python";
+    if (strcmp(name, "bash") == 0 || strcmp(name, "sh") == 0 || strcmp(name, "zsh") == 0) return "bash";
+    if (strcmp(name, "node") == 0 || strcmp(name, "nodejs") == 0) return "javascript";
+    if (strcmp(name, "ruby") == 0) return "ruby";
+    if (strcmp(name, "perl") == 0) return "perl";
+    if (strcmp(name, "lua") == 0) return "lua";
+    if (strcmp(name, "pwsh") == 0 || strcmp(name, "powershell") == 0) return "powershell";
+
+    return NULL;
+}
+
 const char* detect_shebang(const unsigned char* buffer, size_t buffer_len) {
+    const char* interpreter = NULL;
     if (!buffer || buffer_len < 2) return NULL;
     if (buffer[0] != '#' || buffer[1] != '!') return NULL;
 
@@ -1438,13 +1460,54 @@ const char* detect_shebang(const unsigned char* buffer, size_t buffer_len) {
     memcpy(line, buffer, line_len);
     line[line_len] = '\0';
 
-    // Look for common interpreters
-    if (strstr(line, "python")) return "python";
-    if (strstr(line, "bash") || strstr(line, "sh")) return "bash";
-    if (strstr(line, "node")) return "javascript";
-    if (strstr(line, "ruby")) return "ruby";
-    if (strstr(line, "perl")) return "perl";
-    if (strstr(line, "lua")) return "lua";
+    char* p = line + 2;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
 
-    return NULL;
+    if (*p == '\0') {
+        return NULL;
+    }
+
+    char* first = p;
+    while (*p != '\0' && *p != ' ' && *p != '\t') {
+        p++;
+    }
+    if (*p != '\0') {
+        *p++ = '\0';
+    }
+
+    char* first_base = strrchr(first, '/');
+    first_base = first_base ? first_base + 1 : first;
+
+    if (strcmp(first_base, "env") == 0) {
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        while (*p == '-') {
+            while (*p != '\0' && *p != ' ' && *p != '\t') {
+                p++;
+            }
+            while (*p == ' ' || *p == '\t') {
+                p++;
+            }
+        }
+        if (*p == '\0') {
+            return NULL;
+        }
+
+        char* second = p;
+        while (*p != '\0' && *p != ' ' && *p != '\t') {
+            p++;
+        }
+        *p = '\0';
+
+        interpreter = second;
+    } else {
+        interpreter = first_base;
+    }
+
+    char* interp_base = strrchr(interpreter, '/');
+    interp_base = interp_base ? interp_base + 1 : (char*)interpreter;
+    return classify_shebang_interpreter(interp_base);
 }
