@@ -60,6 +60,7 @@ const char* detect_shebang(const unsigned char* buffer, size_t buffer_len);
 int write_fence(FILE* out, size_t count, const char* lang);
 int write_text(FILE* out, const char* text);
 int write_bytes(FILE* out, const void* data, size_t len);
+int write_markdown_path(FILE* out, const char* path);
 int compare_names(const void* lhs, const void* rhs);
 void free_names(char** names, size_t count);
 int is_likely_utf8(const unsigned char* s, size_t n);
@@ -580,7 +581,7 @@ int process_file(const char* filepath,
     fence = (max_run >= 3 ? max_run + 1 : 3);
 
     if (write_text(output_file, "## ") != 0 ||
-        write_text(output_file, display) != 0 ||
+        write_markdown_path(output_file, display) != 0 ||
         write_text(output_file, "\n\n") != 0) {
         free(buffer);
         perror("Error writing file heading");
@@ -808,6 +809,41 @@ int write_text(FILE* out, const char* text) {
 
 int write_bytes(FILE* out, const void* data, size_t len) {
     return (fwrite(data, 1, len, out) == len) ? 0 : -1;
+}
+
+int write_markdown_path(FILE* out, const char* path) {
+    static const char markdown_meta[] = "\\`*_{}[]()#+-.!|>";
+
+    for (const unsigned char* p = (const unsigned char*)path; *p != '\0'; p++) {
+        unsigned char c = *p;
+        if (c == '\n') {
+            if (write_text(out, "\\n") != 0) return -1;
+            continue;
+        }
+        if (c == '\r') {
+            if (write_text(out, "\\r") != 0) return -1;
+            continue;
+        }
+        if (c == '\t') {
+            if (write_text(out, "\\t") != 0) return -1;
+            continue;
+        }
+        if ((c < 0x20 || c == 0x7f)) {
+            char escaped[5];
+            if (snprintf(escaped, sizeof(escaped), "\\x%02X", c) < 0 ||
+                write_text(out, escaped) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (strchr(markdown_meta, c) != NULL && fputc('\\', out) == EOF) {
+            return -1;
+        }
+        if (fputc(c, out) == EOF) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int compare_names(const void* lhs, const void* rhs) {
