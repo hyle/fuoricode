@@ -13,6 +13,8 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 - Formats code in Markdown with appropriate language identifiers
 - Outputs to `_export.md` by default (configurable, including stdout)
 - Simple C implementation that is easy to inspect and review
+- Zero dependencies, plain C99 + POSIX, compiles in seconds on almost anything
+- Tiny footprint, fast execution even on large projects
 
 ## Requirements
 
