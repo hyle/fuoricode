@@ -9,62 +9,14 @@
 
 #include "app.h"
 #include "collect.h"
-#include "git_paths.h"
 #include "ignore.h"
+#include "options.h"
 #include "render.h"
+#include "tree.h"
 
 #ifndef VERSION
 #define VERSION "dev"
 #endif
-
-static int parse_positive_size_value(const char* value,
-                                     const char* label,
-                                     size_t max_value,
-                                     size_t* out) {
-    char* endptr;
-    unsigned long long parsed;
-
-    if (!value || !out) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    errno = 0;
-    parsed = strtoull(value, &endptr, 10);
-    if (*value == '\0' || *endptr != '\0' || parsed == 0 ||
-        errno == ERANGE || parsed > max_value) {
-        fprintf(stderr, "Invalid %s value: %s\n", label, value);
-        fprintf(stderr, "Use -h or --help for usage information\n");
-        return -1;
-    }
-
-    *out = (size_t)parsed;
-    return 0;
-}
-
-static void print_usage(const char* argv0) {
-    printf("Usage: %s [OPTIONS]\n", argv0);
-    printf("Export codebase to markdown file.\n");
-    printf("Default mode uses Git's worktree view when available and falls back to a recursive filesystem walk.\n\n");
-    printf("Options:\n");
-    printf("  -V, --version       Show version information\n");
-    printf("  -v, --verbose       Show progress information\n");
-    printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
-    printf("  -o, --output        Set output path (use '-' for stdout)\n");
-    printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
-    printf("      --staged        Export staged files from the current Git subtree\n");
-    printf("      --unstaged      Export unstaged tracked files from the current Git subtree\n");
-    printf("      --diff <r>      Export files changed by a git diff range (for example main...HEAD)\n");
-    printf("                      Git file-selection flags are mutually exclusive\n");
-    printf("      --tree          Include a directory tree section (default)\n");
-    printf("      --no-tree       Omit the directory tree section\n");
-    printf("      --tree-depth    Limit tree rendering depth to N levels\n");
-    printf("      --warn-tokens   Warn if estimated tokens exceed N (default: %d)\n",
-           DEFAULT_WARN_TOKENS);
-    printf("      --max-tokens    Fail if estimated tokens exceed N\n");
-    printf("      --no-clobber    Fail if output file already exists\n");
-    printf("  -h, --help          Show this help message\n");
-}
 
 static int format_size_with_commas(size_t value, char* buffer, size_t buffer_size) {
     char reversed[64];
@@ -159,208 +111,48 @@ static int make_temp_output_template(const char* output_path, char* tmpl, size_t
 }
 
 int main(int argc, char* argv[]) {
+    CliOptions options;
     AppContext ctx = {0};
-    FileSelectionMode requested_mode = FILE_SELECTION_AUTO;
-    FileSelectionMode resolved_mode = FILE_SELECTION_RECURSIVE;
-    const char* diff_range = NULL;
     SelectedPath* selected_paths = NULL;
     size_t selected_count = 0;
-    GitPathResult git_result = GIT_PATHS_FALLBACK;
     ExportPlan plan = {0};
+    RenderPlanInfo render_info = {0};
     ExportMetrics metrics = {0};
     int status = 1;
     int temp_created = 0;
     int output_needs_close = 0;
     FILE* output_file = NULL;
     char temp_output_path[MAX_PATH_LENGTH];
-    int force_no_git = 0;
-
-    ctx.max_file_size = MAX_FILE_SIZE;
-    ctx.show_tree = 1;
-    ctx.tree_depth = SIZE_MAX;
-    ctx.warn_tokens = DEFAULT_WARN_TOKENS;
-    ctx.output_path = DEFAULT_OUTPUT_FILE;
     temp_output_path[0] = '\0';
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-V") == 0 || strcmp(argv[i], "--version") == 0) {
-            printf("fuori %s\n", VERSION);
-            return 0;
-        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
-            ctx.verbose = 1;
-        } else if (strcmp(argv[i], "-s") == 0) {
-            if (i + 1 < argc) {
-                size_t size_kb;
-                if (parse_positive_size_value(argv[++i], "size", SIZE_MAX / 1024ULL, &size_kb) != 0) {
-                    return 1;
-                }
-                ctx.max_file_size = size_kb * 1024ULL;
-            } else {
-                fprintf(stderr, "Missing size value for -s option\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
-            if (i + 1 < argc) {
-                ctx.output_path = argv[++i];
-                if (ctx.output_path[0] == '\0') {
-                    fprintf(stderr, "Invalid output path: empty string\n");
-                    return 1;
-                }
-                ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
-            } else {
-                fprintf(stderr, "Missing path value for -o/--output option\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-        } else if (strncmp(argv[i], "--output=", 9) == 0) {
-            ctx.output_path = argv[i] + 9;
-            if (ctx.output_path[0] == '\0') {
-                fprintf(stderr, "Invalid output path: empty string\n");
-                return 1;
-            }
-            ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
-        } else if (strcmp(argv[i], "--no-git") == 0) {
-            force_no_git = 1;
-        } else if (strcmp(argv[i], "--no-clobber") == 0) {
-            ctx.no_clobber = 1;
-        } else if (strcmp(argv[i], "--tree") == 0) {
-            ctx.show_tree = 1;
-        } else if (strcmp(argv[i], "--no-tree") == 0) {
-            ctx.show_tree = 0;
-        } else if (strcmp(argv[i], "--tree-depth") == 0) {
-            if (i + 1 < argc) {
-                if (parse_positive_size_value(argv[++i], "tree depth", SIZE_MAX, &ctx.tree_depth) != 0) {
-                    return 1;
-                }
-            } else {
-                fprintf(stderr, "Missing value for --tree-depth option\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-        } else if (strncmp(argv[i], "--tree-depth=", 13) == 0) {
-            if (parse_positive_size_value(argv[i] + 13, "tree depth", SIZE_MAX, &ctx.tree_depth) != 0) {
-                return 1;
-            }
-        } else if (strcmp(argv[i], "--warn-tokens") == 0) {
-            if (i + 1 < argc) {
-                if (parse_positive_size_value(argv[++i], "warn-tokens", SIZE_MAX, &ctx.warn_tokens) != 0) {
-                    return 1;
-                }
-            } else {
-                fprintf(stderr, "Missing value for --warn-tokens option\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-        } else if (strncmp(argv[i], "--warn-tokens=", 14) == 0) {
-            if (parse_positive_size_value(argv[i] + 14, "warn-tokens", SIZE_MAX, &ctx.warn_tokens) != 0) {
-                return 1;
-            }
-        } else if (strcmp(argv[i], "--max-tokens") == 0) {
-            if (i + 1 < argc) {
-                if (parse_positive_size_value(argv[++i], "max-tokens", SIZE_MAX, &ctx.max_tokens) != 0) {
-                    return 1;
-                }
-            } else {
-                fprintf(stderr, "Missing value for --max-tokens option\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-        } else if (strncmp(argv[i], "--max-tokens=", 13) == 0) {
-            if (parse_positive_size_value(argv[i] + 13, "max-tokens", SIZE_MAX, &ctx.max_tokens) != 0) {
-                return 1;
-            }
-        } else if (strcmp(argv[i], "--staged") == 0) {
-            if (requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-            requested_mode = FILE_SELECTION_GIT_STAGED;
-        } else if (strcmp(argv[i], "--unstaged") == 0) {
-            if (requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-            requested_mode = FILE_SELECTION_GIT_UNSTAGED;
-        } else if (strcmp(argv[i], "--diff") == 0) {
-            if (requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Missing range value for --diff option\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-            diff_range = argv[++i];
-            if (diff_range[0] == '\0') {
-                fprintf(stderr, "Invalid diff range: empty string\n");
-                return 1;
-            }
-            requested_mode = FILE_SELECTION_GIT_DIFF;
-        } else if (strncmp(argv[i], "--diff=", 7) == 0) {
-            if (requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
-                return 1;
-            }
-            diff_range = argv[i] + 7;
-            if (diff_range[0] == '\0') {
-                fprintf(stderr, "Invalid diff range: empty string\n");
-                return 1;
-            }
-            requested_mode = FILE_SELECTION_GIT_DIFF;
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_usage(argv[0]);
-            return 0;
-        } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            fprintf(stderr, "Use -h or --help for usage information\n");
-            return 1;
-        }
-    }
-
-    if (force_no_git && requested_mode != FILE_SELECTION_AUTO) {
-        fprintf(stderr, "--no-git cannot be combined with --staged, --unstaged, or --diff\n");
-        fprintf(stderr, "Use -h or --help for usage information\n");
+    if (parse_cli_options(argc, argv, &options) != 0) {
         return 1;
     }
-
-    if (force_no_git) {
-        requested_mode = FILE_SELECTION_RECURSIVE;
+    if (options.show_version) {
+        printf("fuori %s\n", VERSION);
+        return 0;
+    }
+    if (options.show_help) {
+        print_usage(argv[0]);
+        return 0;
+    }
+    if (resolve_cli_selection(&options, &selected_paths, &selected_count) != 0) {
+        goto cleanup;
     }
 
-    if (requested_mode == FILE_SELECTION_AUTO) {
-        if (collect_git_paths(FILE_SELECTION_GIT_WORKTREE,
-                              NULL,
-                              1,
-                              &selected_paths,
-                              &selected_count,
-                              &git_result) != 0) {
-            goto cleanup;
-        }
-        resolved_mode = (git_result == GIT_PATHS_COLLECTED) ? FILE_SELECTION_GIT_WORKTREE
-                                                            : FILE_SELECTION_RECURSIVE;
-    } else {
-        resolved_mode = requested_mode;
-    }
+    ctx.verbose = options.verbose;
+    ctx.no_clobber = options.no_clobber;
+    ctx.output_is_stdout = options.output_is_stdout;
+    ctx.show_tree = options.show_tree;
+    ctx.max_file_size = options.max_file_size;
+    ctx.tree_depth = options.tree_depth;
+    ctx.warn_tokens = options.warn_tokens;
+    ctx.max_tokens = options.max_tokens;
+    ctx.output_path = options.output_path;
 
-    if (resolved_mode == FILE_SELECTION_RECURSIVE) {
+    if (options.resolved_mode == FILE_SELECTION_RECURSIVE) {
         if (load_ignore_patterns(IGNORE_FILE, &ctx.ignore_patterns, &ctx.ignore_count) != 0) {
             fprintf(stderr, "Error: Failed to initialize ignore patterns.\n");
             return 1;
-        }
-    } else if (resolved_mode != FILE_SELECTION_GIT_WORKTREE) {
-        if (collect_git_paths(resolved_mode,
-                              diff_range,
-                              0,
-                              &selected_paths,
-                              &selected_count,
-                              &git_result) != 0) {
-            goto cleanup;
         }
     }
 
@@ -383,7 +175,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (resolved_mode == FILE_SELECTION_RECURSIVE) {
+    if (options.resolved_mode == FILE_SELECTION_RECURSIVE) {
         if (collect_recursive_export_plan(&ctx, &plan) != 0) {
             fprintf(stderr, "Error collecting directory entries\n");
             goto cleanup;
@@ -395,7 +187,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (calculate_export_metrics(&plan, resolved_mode, ctx.show_tree, ctx.tree_depth, &metrics) != 0) {
+    if (prepare_render_plan(&plan, &render_info) != 0) {
+        perror("Error preparing render plan");
+        goto cleanup;
+    }
+
+    if (calculate_export_metrics(&plan, &render_info, options.resolved_mode, ctx.show_tree, ctx.tree_depth, &metrics) != 0) {
         perror("Error calculating export metrics");
         goto cleanup;
     }
@@ -467,7 +264,7 @@ int main(int argc, char* argv[]) {
         ctx.have_temp = 1;
     }
 
-    if (write_export_header(output_file, resolved_mode) != 0) {
+    if (write_export_header(output_file, options.resolved_mode) != 0) {
         perror("Error writing output header");
         goto cleanup;
     }
@@ -479,7 +276,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (render_export_plan(output_file, &plan, ctx.verbose) != 0) {
+    if (render_export_plan(output_file, &plan, &render_info, ctx.verbose) != 0) {
         fprintf(stderr, "Error processing export files\n");
         goto cleanup;
     }
@@ -521,6 +318,7 @@ cleanup:
         unlink(temp_output_path);
     }
     free_export_plan(&plan);
+    free_render_plan_info(&render_info);
     free_selected_paths(selected_paths, selected_count);
     free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
     return status;

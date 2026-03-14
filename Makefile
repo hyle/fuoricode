@@ -3,7 +3,7 @@ CPPFLAGS += -DVERSION=\"$(VERSION)\"
 CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wwrite-strings -Wredundant-decls \
          -Wstrict-prototypes -Wold-style-definition -std=c99 -O2 -D_POSIX_C_SOURCE=200809L
 TARGET = fuori
-SOURCES = main.c collect.c render.c git_paths.c ignore.c
+SOURCES = main.c collect.c render.c git_paths.c ignore.c options.c tree.c
 TEST_TARGET = test_ignore
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
