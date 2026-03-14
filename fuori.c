@@ -6,6 +6,7 @@
 #include <fnmatch.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <limits.h>
 #include <stdint.h>
@@ -37,6 +38,18 @@ typedef struct {
     int have_final;
 } AppContext;
 
+typedef enum {
+    FILE_SELECTION_RECURSIVE = 0,
+    FILE_SELECTION_GIT_STAGED,
+    FILE_SELECTION_GIT_UNSTAGED,
+    FILE_SELECTION_GIT_DIFF
+} FileSelectionMode;
+
+typedef struct {
+    char* open_path;
+    char* display_path;
+} SelectedPath;
+
 // Function prototypes
 int is_binary_file(const unsigned char* buffer, size_t bytes_read);
 int should_exclude_file(const char* filepath,
@@ -52,25 +65,53 @@ int process_directory(const char* base_path,
                       int ancestor_ignored);
 // Return codes: 0 = exported, 1 = skipped (binary/empty), -1 = error.
 int process_file(const char* filepath,
+                 const char* display_path,
                  const struct stat* st,
                  size_t max_file_size,
                  FILE* output_file);
+int process_selected_paths(const SelectedPath* paths,
+                           size_t count,
+                           FILE* output_file,
+                           AppContext* ctx);
 const char* get_language_identifier(const char* filepath, const unsigned char* buffer, size_t buffer_len);
 const char* detect_shebang(const unsigned char* buffer, size_t buffer_len);
 int write_fence(FILE* out, size_t count, const char* lang);
 int write_text(FILE* out, const char* text);
 int write_bytes(FILE* out, const void* data, size_t len);
 int write_markdown_path(FILE* out, const char* path);
+int write_export_header(FILE* out, FileSelectionMode mode);
 int compare_names(const void* lhs, const void* rhs);
+int compare_selected_paths(const void* lhs, const void* rhs);
 void free_names(char** names, size_t count);
+void free_selected_paths(SelectedPath* paths, size_t count);
 int is_likely_utf8(const unsigned char* s, size_t n);
 int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size);
 int should_descend_into_ignored_dir(const char* dirpath, char** patterns, size_t count);
+int run_command_capture(const char* const argv[],
+                        unsigned char** output,
+                        size_t* output_len,
+                        int* exit_status,
+                        int* exec_errno);
+int capture_git_line(const char* repo_root, const char* rev_parse_arg, char** line_out);
+int collect_git_paths(FileSelectionMode mode,
+                      const char* diff_range,
+                      SelectedPath** paths_out,
+                      size_t* count_out);
 
 int main(int argc, char* argv[]) {
     AppContext ctx = {0};
+    FileSelectionMode selection_mode = FILE_SELECTION_RECURSIVE;
+    const char* diff_range = NULL;
+    SelectedPath* selected_paths = NULL;
+    size_t selected_count = 0;
+    int status = 1;
+    int temp_created = 0;
+    int output_needs_close = 0;
+    FILE* output_file = NULL;
+    char temp_output_path[MAX_PATH_LENGTH];
     ctx.max_file_size = MAX_FILE_SIZE;  // Default value
     ctx.output_path = DEFAULT_OUTPUT_FILE;
+    temp_output_path[0] = '\0';
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
@@ -116,6 +157,49 @@ int main(int argc, char* argv[]) {
             ctx.output_is_stdout = (strcmp(ctx.output_path, "-") == 0);
         } else if (strcmp(argv[i], "--no-clobber") == 0) {
             ctx.no_clobber = 1;
+        } else if (strcmp(argv[i], "--staged") == 0) {
+            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+                fprintf(stderr, "File-selection flags are mutually exclusive\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+            selection_mode = FILE_SELECTION_GIT_STAGED;
+        } else if (strcmp(argv[i], "--unstaged") == 0) {
+            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+                fprintf(stderr, "File-selection flags are mutually exclusive\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+            selection_mode = FILE_SELECTION_GIT_UNSTAGED;
+        } else if (strcmp(argv[i], "--diff") == 0) {
+            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+                fprintf(stderr, "File-selection flags are mutually exclusive\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing range value for --diff option\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+            diff_range = argv[++i];
+            if (diff_range[0] == '\0') {
+                fprintf(stderr, "Invalid diff range: empty string\n");
+                return 1;
+            }
+            selection_mode = FILE_SELECTION_GIT_DIFF;
+        } else if (strncmp(argv[i], "--diff=", 7) == 0) {
+            if (selection_mode != FILE_SELECTION_RECURSIVE) {
+                fprintf(stderr, "File-selection flags are mutually exclusive\n");
+                fprintf(stderr, "Use -h or --help for usage information\n");
+                return 1;
+            }
+            diff_range = argv[i] + 7;
+            if (diff_range[0] == '\0') {
+                fprintf(stderr, "Invalid diff range: empty string\n");
+                return 1;
+            }
+            selection_mode = FILE_SELECTION_GIT_DIFF;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [OPTIONS]\n", argv[0]);
             printf("Export codebase to markdown file.\n\n");
@@ -123,6 +207,10 @@ int main(int argc, char* argv[]) {
             printf("  -v, --verbose    Show progress information\n");
             printf("  -s <size_kb>     Set maximum file size limit in KB (default: 100)\n");
             printf("  -o, --output     Set output path (use '-' for stdout)\n");
+            printf("      --staged     Export staged files from the current Git subtree\n");
+            printf("      --unstaged   Export unstaged tracked files from the current Git subtree\n");
+            printf("      --diff <r>   Export files changed by a git diff range (for example main...HEAD)\n");
+            printf("                   Git file-selection flags are mutually exclusive\n");
             printf("      --no-clobber Fail if output file already exists\n");
             printf("  -h, --help       Show this help message\n");
             return 0;
@@ -139,12 +227,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int status = 1;
-    int temp_created = 0;
-    int output_needs_close = 0;
-    FILE* output_file = NULL;
-    char temp_output_path[MAX_PATH_LENGTH];
-    temp_output_path[0] = '\0';
+    if (selection_mode != FILE_SELECTION_RECURSIVE) {
+        if (collect_git_paths(selection_mode, diff_range, &selected_paths, &selected_count) != 0) {
+            goto cleanup;
+        }
+    }
 
     if (ctx.output_is_stdout) {
         output_file = stdout;
@@ -198,16 +285,21 @@ int main(int argc, char* argv[]) {
     }
 
     // Write markdown header
-    if (write_text(output_file, "# Codebase Export\n\n") != 0 ||
-        write_text(output_file, "This document contains all the source code files from the codebase.\n\n") != 0) {
+    if (write_export_header(output_file, selection_mode) != 0) {
         perror("Error writing output header");
         goto cleanup;
     }
 
-    // Process current directory
-    if (process_directory(".", output_file, &ctx, 0) != 0) {
-        fprintf(stderr, "Error processing directory\n");
-        goto cleanup;
+    if (selection_mode == FILE_SELECTION_RECURSIVE) {
+        if (process_directory(".", output_file, &ctx, 0) != 0) {
+            fprintf(stderr, "Error processing directory\n");
+            goto cleanup;
+        }
+    } else {
+        if (process_selected_paths(selected_paths, selected_count, output_file, &ctx) != 0) {
+            fprintf(stderr, "Error processing selected files\n");
+            goto cleanup;
+        }
     }
 
     if (fflush(output_file) != 0) {
@@ -245,6 +337,7 @@ cleanup:
     if (temp_created && temp_output_path[0] != '\0') {
         unlink(temp_output_path);
     }
+    free_selected_paths(selected_paths, selected_count);
     free_ignore_patterns(ctx.ignore_patterns, ctx.ignore_count);
     return status;
 }
@@ -386,7 +479,7 @@ int process_directory(const char* base_path,
                 if (ctx->verbose) {
                     fprintf(stderr, "Processing file: %s\n", path);
                 }
-                int result = process_file(path, &st, ctx->max_file_size, output_file);
+                int result = process_file(path, path, &st, ctx->max_file_size, output_file);
                 if (result == 1) {
                     if (ctx->verbose) {
                         fprintf(stderr, "Skipping binary/empty file: %s\n", path);
@@ -416,6 +509,7 @@ cleanup:
 
 // Return codes: 0 = exported, 1 = skipped (binary/empty), -1 = error.
 int process_file(const char* filepath,
+                 const char* display_path,
                  const struct stat* st,
                  size_t max_file_size,
                  FILE* output_file) {
@@ -433,7 +527,12 @@ int process_file(const char* filepath,
     struct stat opened_st;
 
     // Normalize heading by removing leading "./"
-    const char* display = (strncmp(filepath, "./", 2) == 0) ? filepath + 2 : filepath;
+    const char* display = display_path;
+    if (!display) {
+        display = (strncmp(filepath, "./", 2) == 0) ? filepath + 2 : filepath;
+    } else if (strncmp(display, "./", 2) == 0) {
+        display += 2;
+    }
     if (st->st_size < 0) {
         errno = EINVAL;
         perror("Invalid file size");
@@ -612,6 +711,62 @@ int process_file(const char* filepath,
         perror("Error writing closing code fence");
         return -1;
     }
+    return 0;
+}
+
+int process_selected_paths(const SelectedPath* paths,
+                           size_t count,
+                           FILE* output_file,
+                           AppContext* ctx) {
+    for (size_t i = 0; i < count; i++) {
+        const SelectedPath* path = &paths[i];
+        struct stat st;
+
+        if (ctx->verbose) {
+            fprintf(stderr, "Processing selected file: %s\n", path->display_path);
+        }
+
+        if (lstat(path->open_path, &st) == -1) {
+            if (errno == ENOENT) {
+                continue;
+            }
+            perror("Error getting selected file status");
+            continue;
+        }
+
+        if (!S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+            continue;
+        }
+
+        if ((ctx->have_temp &&
+             st.st_dev == ctx->temp_stat.st_dev && st.st_ino == ctx->temp_stat.st_ino) ||
+            (ctx->have_final &&
+             st.st_dev == ctx->final_stat.st_dev && st.st_ino == ctx->final_stat.st_ino)) {
+            continue;
+        }
+
+        if (st.st_size < 0 || (size_t)st.st_size > ctx->max_file_size) {
+            continue;
+        }
+
+        int result = process_file(path->open_path,
+                                  path->display_path,
+                                  &st,
+                                  ctx->max_file_size,
+                                  output_file);
+        if (result == 1) {
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping binary/empty file: %s\n", path->display_path);
+            }
+        } else if (result != 0) {
+            if (ferror(output_file)) {
+                perror("Error writing export output");
+                return -1;
+            }
+            fprintf(stderr, "Warning: Failed to process file %s\n", path->display_path);
+        }
+    }
+
     return 0;
 }
 
@@ -846,10 +1001,42 @@ int write_markdown_path(FILE* out, const char* path) {
     return 0;
 }
 
+int write_export_header(FILE* out, FileSelectionMode mode) {
+    if (write_text(out, "# Codebase Export\n\n") != 0) {
+        return -1;
+    }
+
+    switch (mode) {
+        case FILE_SELECTION_GIT_STAGED:
+            return write_text(out,
+                              "This document contains staged files selected from the current Git subtree.\n\n");
+        case FILE_SELECTION_GIT_UNSTAGED:
+            return write_text(out,
+                              "This document contains unstaged tracked files selected from the current Git subtree.\n\n");
+        case FILE_SELECTION_GIT_DIFF:
+            return write_text(out,
+                              "This document contains files selected from the current Git subtree by the requested Git diff range.\n\n");
+        case FILE_SELECTION_RECURSIVE:
+        default:
+            return write_text(out,
+                              "This document contains all the source code files from the current directory subtree.\n\n");
+    }
+}
+
 int compare_names(const void* lhs, const void* rhs) {
     const char* const* left = lhs;
     const char* const* right = rhs;
     return strcmp(*left, *right);
+}
+
+int compare_selected_paths(const void* lhs, const void* rhs) {
+    const SelectedPath* left = lhs;
+    const SelectedPath* right = rhs;
+    int display_cmp = strcmp(left->display_path, right->display_path);
+    if (display_cmp != 0) {
+        return display_cmp;
+    }
+    return strcmp(left->open_path, right->open_path);
 }
 
 void free_names(char** names, size_t count) {
@@ -858,6 +1045,337 @@ void free_names(char** names, size_t count) {
         free(names[i]);
     }
     free(names);
+}
+
+void free_selected_paths(SelectedPath* paths, size_t count) {
+    if (!paths) return;
+    for (size_t i = 0; i < count; i++) {
+        free(paths[i].open_path);
+        free(paths[i].display_path);
+    }
+    free(paths);
+}
+
+int run_command_capture(const char* const argv[],
+                        unsigned char** output,
+                        size_t* output_len,
+                        int* exit_status,
+                        int* exec_errno) {
+    int stdout_pipe[2];
+    int error_pipe[2];
+    pid_t pid;
+    unsigned char* buffer = NULL;
+    size_t used = 0;
+    size_t capacity = 0;
+    int status = -1;
+
+    *output = NULL;
+    *output_len = 0;
+    *exit_status = -1;
+    *exec_errno = 0;
+
+    if (pipe(stdout_pipe) == -1) {
+        return -1;
+    }
+    if (pipe(error_pipe) == -1) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        return -1;
+    }
+
+    pid = fork();
+    if (pid == -1) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        int child_errno;
+        close(stdout_pipe[0]);
+        close(error_pipe[0]);
+
+        if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1) {
+            child_errno = errno;
+            write(error_pipe[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+
+        close(stdout_pipe[1]);
+        execvp(argv[0], (char* const*)argv);
+
+        child_errno = errno;
+        write(error_pipe[1], &child_errno, sizeof(child_errno));
+        close(error_pipe[1]);
+        _exit(127);
+    }
+
+    close(stdout_pipe[1]);
+    close(error_pipe[1]);
+
+    while (1) {
+        unsigned char chunk[4096];
+        ssize_t read_len = read(stdout_pipe[0], chunk, sizeof(chunk));
+        if (read_len == 0) {
+            break;
+        }
+        if (read_len < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            goto cleanup;
+        }
+        if (used + (size_t)read_len < used) {
+            errno = EOVERFLOW;
+            goto cleanup;
+        }
+        if (used + (size_t)read_len > capacity) {
+            size_t new_capacity = (capacity == 0) ? 4096 : capacity;
+            while (new_capacity < used + (size_t)read_len) {
+                if (new_capacity > SIZE_MAX / 2) {
+                    new_capacity = used + (size_t)read_len;
+                    break;
+                }
+                new_capacity *= 2;
+            }
+            unsigned char* new_buffer = realloc(buffer, new_capacity);
+            if (!new_buffer) {
+                goto cleanup;
+            }
+            buffer = new_buffer;
+            capacity = new_capacity;
+        }
+        memcpy(buffer + used, chunk, (size_t)read_len);
+        used += (size_t)read_len;
+    }
+
+    while (1) {
+        ssize_t error_len = read(error_pipe[0], exec_errno, sizeof(*exec_errno));
+        if (error_len == 0) {
+            break;
+        }
+        if (error_len < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            goto cleanup;
+        }
+        break;
+    }
+
+    while (waitpid(pid, exit_status, 0) == -1) {
+        if (errno != EINTR) {
+            goto cleanup;
+        }
+    }
+
+    *output = buffer;
+    *output_len = used;
+    status = 0;
+    buffer = NULL;
+
+cleanup:
+    free(buffer);
+    close(stdout_pipe[0]);
+    close(error_pipe[0]);
+    return status;
+}
+
+int capture_git_line(const char* repo_root, const char* rev_parse_arg, char** line_out) {
+    const char* const argv[] = {"git", "-C", repo_root, "rev-parse", rev_parse_arg, NULL};
+    unsigned char* output = NULL;
+    size_t output_len = 0;
+    int exit_status = 0;
+    int exec_errno = 0;
+
+    *line_out = NULL;
+    if (run_command_capture(argv, &output, &output_len, &exit_status, &exec_errno) != 0) {
+        perror("Error running git");
+        return -1;
+    }
+    if (exec_errno != 0) {
+        errno = exec_errno;
+        perror("Error executing git");
+        free(output);
+        return -1;
+    }
+    if (!WIFEXITED(exit_status) || WEXITSTATUS(exit_status) != 0) {
+        errno = 0;
+        fprintf(stderr, "git rev-parse failed for %s\n", rev_parse_arg);
+        free(output);
+        return -1;
+    }
+
+    while (output_len > 0 &&
+           (output[output_len - 1] == '\n' || output[output_len - 1] == '\r')) {
+        output_len--;
+    }
+
+    char* line = malloc(output_len + 1);
+    if (!line) {
+        free(output);
+        return -1;
+    }
+    memcpy(line, output, output_len);
+    line[output_len] = '\0';
+
+    free(output);
+    *line_out = line;
+    return 0;
+}
+
+int collect_git_paths(FileSelectionMode mode,
+                      const char* diff_range,
+                      SelectedPath** paths_out,
+                      size_t* count_out) {
+    char* repo_root = NULL;
+    char* prefix = NULL;
+    const char* diff_filter = "--diff-filter=AMR";
+    const char* const* argv = NULL;
+    const char* args[12];
+    unsigned char* output = NULL;
+    size_t output_len = 0;
+    int exit_status = 0;
+    int exec_errno = 0;
+    SelectedPath* paths = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+    int status = -1;
+
+    *paths_out = NULL;
+    *count_out = 0;
+
+    errno = 0;
+    if (capture_git_line(".", "--show-toplevel", &repo_root) != 0) {
+        if (errno == ENOENT) {
+            fprintf(stderr, "Git file-selection modes require git to be installed\n");
+        } else {
+            fprintf(stderr, "Git file-selection modes require a Git repository\n");
+        }
+        goto cleanup;
+    }
+    if (capture_git_line(".", "--show-prefix", &prefix) != 0) {
+        goto cleanup;
+    }
+
+    size_t argc = 0;
+    args[argc++] = "git";
+    args[argc++] = "-C";
+    args[argc++] = repo_root;
+    args[argc++] = "diff";
+    if (mode == FILE_SELECTION_GIT_STAGED) {
+        args[argc++] = "--cached";
+    }
+    args[argc++] = "--name-only";
+    args[argc++] = diff_filter;
+    args[argc++] = "-z";
+    if (mode == FILE_SELECTION_GIT_DIFF) {
+        args[argc++] = (char*)diff_range;
+    }
+    if (prefix[0] != '\0') {
+        args[argc++] = "--";
+        args[argc++] = prefix;
+    }
+    args[argc] = NULL;
+    argv = args;
+
+    if (run_command_capture(argv, &output, &output_len, &exit_status, &exec_errno) != 0) {
+        perror("Error running git");
+        goto cleanup;
+    }
+    if (exec_errno != 0) {
+        errno = exec_errno;
+        perror("Error executing git");
+        goto cleanup;
+    }
+    if (!WIFEXITED(exit_status) || WEXITSTATUS(exit_status) != 0) {
+        fprintf(stderr, "git diff failed for the requested file-selection mode\n");
+        goto cleanup;
+    }
+
+    size_t start = 0;
+    size_t prefix_len = strlen(prefix);
+    while (start < output_len) {
+        size_t end = start;
+        while (end < output_len && output[end] != '\0') {
+            end++;
+        }
+        if (end > start) {
+            size_t repo_rel_len = end - start;
+            const char* repo_rel = (const char*)(output + start);
+            const char* display_rel = repo_rel;
+
+            if (prefix_len > 0 &&
+                strncmp(repo_rel, prefix, prefix_len) == 0) {
+                display_rel = repo_rel + prefix_len;
+            }
+
+            if (count == capacity) {
+                size_t new_capacity = (capacity == 0) ? 16 : capacity * 2;
+                SelectedPath* new_paths = realloc(paths, new_capacity * sizeof(*paths));
+                if (!new_paths) {
+                    goto cleanup;
+                }
+                paths = new_paths;
+                capacity = new_capacity;
+            }
+
+            size_t open_path_len = strlen(repo_root) + 1 + repo_rel_len;
+            paths[count].open_path = malloc(open_path_len + 1);
+            if (!paths[count].open_path) {
+                goto cleanup;
+            }
+            memcpy(paths[count].open_path, repo_root, strlen(repo_root));
+            paths[count].open_path[strlen(repo_root)] = '/';
+            memcpy(paths[count].open_path + strlen(repo_root) + 1, repo_rel, repo_rel_len);
+            paths[count].open_path[open_path_len] = '\0';
+
+            paths[count].display_path = strdup(display_rel);
+            if (!paths[count].display_path) {
+                free(paths[count].open_path);
+                paths[count].open_path = NULL;
+                goto cleanup;
+            }
+            count++;
+        }
+        start = end + 1;
+    }
+
+    if (count > 1) {
+        qsort(paths, count, sizeof(*paths), compare_selected_paths);
+        size_t unique_count = 1;
+        for (size_t i = 1; i < count; i++) {
+            if (strcmp(paths[i - 1].open_path, paths[i].open_path) == 0 &&
+                strcmp(paths[i - 1].display_path, paths[i].display_path) == 0) {
+                free(paths[i].open_path);
+                free(paths[i].display_path);
+                paths[i].open_path = NULL;
+                paths[i].display_path = NULL;
+                continue;
+            }
+            if (unique_count != i) {
+                paths[unique_count] = paths[i];
+                paths[i].open_path = NULL;
+                paths[i].display_path = NULL;
+            }
+            unique_count++;
+        }
+        count = unique_count;
+    }
+
+    *paths_out = paths;
+    *count_out = count;
+    paths = NULL;
+    status = 0;
+
+cleanup:
+    free(output);
+    free(repo_root);
+    free(prefix);
+    free_selected_paths(paths, count);
+    return status;
 }
 
 typedef struct {
