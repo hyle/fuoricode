@@ -12,6 +12,7 @@ A C application that exports a codebase to a single Markdown file with UTF-8 enc
 - Automatically detects and excludes binary files
 - Excludes files larger than 100KB (configurable)
 - Formats code in Markdown with appropriate language identifiers
+- Estimates final artifact token usage with a conservative 3.5 chars/token heuristic
 - Outputs to `_export.md` by default (configurable, including stdout)
 - Simple C implementation that is easy to inspect and review
 - Zero dependencies, plain C99 + POSIX, compiles in seconds on almost anything
@@ -70,6 +71,8 @@ By default, the application creates a file named `_export.md` in the current dir
 - `--tree`: Include the project tree section (default)
 - `--no-tree`: Omit the project tree section
 - `--tree-depth <n>` / `--tree-depth=<n>`: Limit tree rendering depth to `n` levels
+- `--warn-tokens <n>` / `--warn-tokens=<n>`: Warn if the estimated token count exceeds `n` (default: 200000)
+- `--max-tokens <n>` / `--max-tokens=<n>`: Fail before writing output if the estimated token count exceeds `n`
 - `--no-clobber`: Fail if output file already exists
 - `-h, --help`: Display help message
 
@@ -112,6 +115,12 @@ fuori --diff HEAD~3..HEAD
 
 # Export files changed on the current branch since it diverged from main
 fuori --diff main...HEAD
+
+# Warn earlier for smaller context windows
+fuori --warn-tokens 100000
+
+# Refuse to write exports above a hard token budget
+fuori --max-tokens 180000
 
 # Show help
 fuori --help
@@ -157,6 +166,26 @@ Additional semantics:
 - Renamed files are exported under the current path reported by Git
 - If Git selects no files, `fuori` still succeeds and writes only the normal export header
 
+## Token Estimates
+
+After a successful export, `fuori` prints a compact summary to `stderr`:
+
+```text
+Files exported: 42
+Bytes written:  183,421
+Est. tokens:    ~52,400  (approx, assuming BPE ~3.5 chars/token)
+```
+
+The estimate is based on the final Markdown artifact, not just the raw source files, so headings, code fences, and the optional tree section are included in the byte count before estimating tokens.
+
+By default, `fuori` warns when the estimate exceeds 200,000 tokens:
+
+```text
+Warning: output may exceed 200,000 token context window. Consider using --staged or --diff to narrow scope.
+```
+
+Use `--warn-tokens <n>` to change the warning threshold, or `--max-tokens <n>` to fail before writing any output when the estimated size would exceed a hard limit.
+
 ## Binary File Detection
 
 The application automatically detects binary files by analyzing their content and excludes them from the export.
@@ -172,6 +201,7 @@ The output markdown file will contain:
 3. A header with the file path
 4. A code block with the file content
 5. Appropriate language identifiers for syntax highlighting
+6. A `stderr` summary of files, bytes, and estimated tokens after successful completion
 
 Example:
 ````markdown
