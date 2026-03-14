@@ -4,6 +4,7 @@ CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wwrite-strings -Wredundant-decls \
          -Wstrict-prototypes -Wold-style-definition -std=c99 -O2 -D_POSIX_C_SOURCE=200809L
 TARGET = fuori
 SOURCES = main.c collect.c render.c git_paths.c ignore.c
+TEST_TARGET = test_ignore
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 VERSION ?= dev
@@ -13,8 +14,14 @@ all: $(TARGET)
 $(TARGET): $(SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
+$(TEST_TARGET): test_ignore.c ignore.c ignore.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TEST_TARGET) test_ignore.c ignore.c
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TEST_TARGET)
 
 install: $(TARGET)
 	install -d $(BINDIR)

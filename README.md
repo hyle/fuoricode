@@ -133,8 +133,8 @@ fuori --help
 ## .gitignore File
 
 You can create a `.gitignore` file in the directory to specify files and patterns to exclude from the export.
-This tool supports common gitignore-style rules (comments, `!` negation, trailing `/` for directories),
-but does not implement recursive `**` glob semantics.
+This tool supports common gitignore-style rules, including comments, `!` negation, trailing `/` for directories,
+root-anchored `/` patterns, and recursive `**` path globs such as `**/node_modules/` and `**/*.pyc`.
 
 ```
 # Ignore build directories

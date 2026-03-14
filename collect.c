@@ -296,7 +296,7 @@ static int should_exclude_file(const char* filepath,
                                const struct stat* st,
                                size_t max_file_size,
                                int ancestor_ignored,
-                               char** patterns,
+                               const IgnorePattern* patterns,
                                size_t count) {
     if (!S_ISREG(st->st_mode)) {
         return 1;
