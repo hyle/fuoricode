@@ -125,6 +125,10 @@ You can create a `.gitignore` file in the directory to specify files and pattern
 These rules apply to the recursive filesystem walker, including `--no-git` mode and automatic fallback outside Git repositories.
 This tool supports common gitignore-style rules, including comments, `!` negation, trailing `/` for directories,
 root-anchored `/` patterns, and recursive `**` path globs such as `**/node_modules/` and `**/*.pyc`.
+In filesystem mode, `fuori` also seeds a small built-in default ignore list even when no `.gitignore` is present:
+`.git/`, `node_modules/`, `build/`, `dist/`, `bin/`, `.venv/`, `__pycache__/`, `.env`, `.DS_Store`,
+and common compiled/log artifacts such as `*.o`, `*.a`, `*.so`, `*.exe`, `*.dll`, and `*.log`.
+If you need those paths exported, use stdin selection or move the files outside those default patterns.
 
 ```
 # Ignore build directories

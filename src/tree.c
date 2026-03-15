@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "text_io.h"
+
 #define TREE_BRANCH "\xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 "
 #define TREE_LAST "\xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 "
 #define TREE_PIPE "\xE2\x94\x82   "
@@ -31,10 +33,6 @@ static int add_size(size_t* total, size_t amount) {
     }
     *total += amount;
     return 0;
-}
-
-static int write_text(FILE* out, const char* text) {
-    return (fputs(text, out) == EOF) ? -1 : 0;
 }
 
 static int ensure_prefix_capacity(TreePrefixBuffer* prefix, size_t needed_len) {
@@ -81,29 +79,25 @@ static int append_prefix_segment(TreePrefixBuffer* prefix, const char* segment) 
     return 0;
 }
 
-static int count_text_bytes(size_t* total, const char* text) {
-    return add_size(total, strlen(text));
-}
-
 static int write_visible_text(FILE* out, const char* text) {
     for (const unsigned char* p = (const unsigned char*)text; *p != '\0'; p++) {
         unsigned char c = *p;
         if (c == '\n') {
-            if (write_text(out, "\\n") != 0) return -1;
+            if (fuori_write_text(out, "\\n") != 0) return -1;
             continue;
         }
         if (c == '\r') {
-            if (write_text(out, "\\r") != 0) return -1;
+            if (fuori_write_text(out, "\\r") != 0) return -1;
             continue;
         }
         if (c == '\t') {
-            if (write_text(out, "\\t") != 0) return -1;
+            if (fuori_write_text(out, "\\t") != 0) return -1;
             continue;
         }
         if ((c < 0x20 || c == 0x7f)) {
             char escaped[5];
             if (snprintf(escaped, sizeof(escaped), "\\x%02X", c) < 0 ||
-                write_text(out, escaped) != 0) {
+                fuori_write_text(out, escaped) != 0) {
                 return -1;
             }
             continue;
@@ -235,10 +229,10 @@ static int write_tree_children(FILE* out,
         const TreeNode* child = node->children[i];
         int is_last = (i + 1 == node->child_count);
 
-        if (write_text(out, prefix->data ? prefix->data : "") != 0 ||
-            write_text(out, is_last ? TREE_LAST : TREE_BRANCH) != 0 ||
+        if (fuori_write_text(out, prefix->data ? prefix->data : "") != 0 ||
+            fuori_write_text(out, is_last ? TREE_LAST : TREE_BRANCH) != 0 ||
             write_visible_text(out, child->name) != 0 ||
-            write_text(out, "\n") != 0) {
+            fuori_write_text(out, "\n") != 0) {
             return -1;
         }
 
@@ -315,13 +309,13 @@ int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
     }
     sort_tree(root);
 
-    if (write_text(out, "## Project Tree\n\n```text\n") != 0) {
+    if (fuori_write_text(out, "## Project Tree\n\n```text\n") != 0) {
         free_tree(root);
         return -1;
     }
 
     if (root->child_count == 0) {
-        if (write_text(out, "(no exported files)\n") != 0) {
+        if (fuori_write_text(out, "(no exported files)\n") != 0) {
             goto cleanup;
         }
     } else {
@@ -334,7 +328,7 @@ int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
         }
     }
 
-    result = write_text(out, "```\n\n");
+    result = fuori_write_text(out, "```\n\n");
 
 cleanup:
     free(prefix.data);
@@ -356,13 +350,13 @@ int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* t
     }
     sort_tree(root);
 
-    if (count_text_bytes(total, "## Project Tree\n\n```text\n") != 0) {
+    if (fuori_count_text_bytes(total, "## Project Tree\n\n```text\n") != 0) {
         free_tree(root);
         return -1;
     }
 
     if (root->child_count == 0) {
-        if (count_text_bytes(total, "(no exported files)\n") != 0) {
+        if (fuori_count_text_bytes(total, "(no exported files)\n") != 0) {
             free_tree(root);
             return -1;
         }
@@ -372,5 +366,5 @@ int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* t
     }
 
     free_tree(root);
-    return count_text_bytes(total, "```\n\n");
+    return fuori_count_text_bytes(total, "```\n\n");
 }

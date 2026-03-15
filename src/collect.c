@@ -144,6 +144,7 @@ static int is_likely_utf8(const unsigned char* s, size_t n) {
 }
 
 static int is_binary_file(const unsigned char* buffer, size_t bytes_read) {
+    /* Empty files are filtered by the caller; this helper only classifies non-empty content. */
     if (bytes_read == 0) return 0;
 
     for (size_t i = 0; i < bytes_read; i++) {
@@ -521,7 +522,15 @@ static int collect_exportable_file(const char* open_path,
         fprintf(stderr, "Warning: Failed to process file %s\n", display_path);
         return 0;
     }
-    if (bytes_read == 0 || is_binary_file(buffer, bytes_read)) {
+    if (bytes_read == 0) {
+        ctx->skipped_binary++;
+        if (ctx->verbose) {
+            fprintf(stderr, "Skipping binary/empty file: %s\n", display_path);
+        }
+        free(buffer);
+        return 0;
+    }
+    if (is_binary_file(buffer, bytes_read)) {
         ctx->skipped_binary++;
         if (ctx->verbose) {
             fprintf(stderr, "Skipping binary/empty file: %s\n", display_path);
