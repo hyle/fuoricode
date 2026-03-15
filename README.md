@@ -55,21 +55,6 @@ Run `fuori` in any directory you want to export:
 
 By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format. Inside a Git repository, it prefers Git's view of the current subtree (tracked files plus untracked non-ignored files); outside a repository, or when you pass `--no-git`, it falls back to the recursive filesystem walker.
 
-## Repository Layout
-
-The repository keeps project-level files at the root and uses a small-app layout for code:
-
-```text
-.
-├── .github/
-├── src/
-├── tests/
-├── CONTRIBUTING.md
-├── LICENSE
-├── Makefile
-└── README.md
-```
-
 ### Command Line Options
 
 ```bash
