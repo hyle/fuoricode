@@ -20,6 +20,7 @@ For behavior changes, also do a manual sanity check of the affected code path.
 
 Repository layout:
 
+- contributor-facing design notes live in `docs/design.md`
 - production code lives in `src/`
 - test assets live in `tests/`
 - project-level docs and build files stay at the repo root

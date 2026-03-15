@@ -1,6 +1,24 @@
 # fuoricode
 
-A C application that exports a codebase to a single Markdown file with UTF-8 encoding.
+Export the right slice of a codebase into a single Markdown artifact that is easy to hand to an LLM.
+
+```bash
+fuori --staged -o review.md
+```
+
+Built for the boring but important job of turning a real working tree into clean, reviewable context without manual copy-paste.
+
+## When to use it
+
+- Prepare context for an LLM without pasting files by hand
+- Review staged changes as one artifact before a commit or PR
+- Snapshot a subtree for debugging, discussion, or handoff
+
+## How it works
+
+1. Select files from Git or the filesystem, depending on the mode
+2. Filter out unsafe or non-exportable content such as binaries, oversized files, symlinks, and generated output targets
+3. Render one Markdown artifact with a project tree, per-file headings, and fenced code blocks
 
 ## Features
 
@@ -54,6 +72,8 @@ Run `fuori` in any directory you want to export:
 ```
 
 By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format. Inside a Git repository, it prefers Git's view of the current subtree (tracked files plus untracked non-ignored files); outside a repository, or when you pass `--no-git`, it falls back to the recursive filesystem walker.
+
+Contributor-oriented design notes live in [`docs/design.md`](docs/design.md).
 
 ### Command Line Options
 
@@ -205,6 +225,7 @@ Use `--warn-tokens <n>` to change the warning threshold, or `--max-tokens <n>` t
 The application automatically detects binary files by analyzing their content and excludes them from the export.
 Empty files are skipped.
 Symbolic links are skipped to avoid recursion cycles.
+UTF-16 encoded files are currently treated as non-exportable and skipped by this detection path.
 
 ## Output Format
 
