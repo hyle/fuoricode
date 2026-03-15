@@ -16,8 +16,8 @@ Turns your messy working tree into clean, auditable context. Zero copy-paste, ze
 
 ## How it works
 
-1. Select files from Git or the filesystem depending on the modee
-2. Strip out anything non-exportable such as binaries, oversized files, symlinks
+1. Select files from Git, the filesystem, or stdin depending on the mode
+2. Strip out anything non-exportable such as binaries, empty files, oversized files, symlinks
 3. Render one Markdown artifact with a project tree, per-file headings, and fenced code blocks
 
 ## Features
@@ -40,7 +40,7 @@ Turns your messy working tree into clean, auditable context. Zero copy-paste, ze
 ## Requirements
 
 - A C compiler supporting C99
-- PPOSIX.1-2008 environment (Linux, macOS, WSL, etc.)
+- POSIX.1-2008 environment (Linux, macOS, WSL, etc.)
 
 ## Install
 
