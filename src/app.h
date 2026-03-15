@@ -2,7 +2,6 @@
 #define APP_H
 
 #include <stddef.h>
-#include <stdint.h>
 #include <sys/stat.h>
 
 #define MAX_FILE_SIZE (100 * 1024)

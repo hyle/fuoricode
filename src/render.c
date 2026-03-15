@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "text_io.h"
 #include "tree.h"
 
 #ifdef FUORI_TESTING
@@ -68,10 +69,6 @@ static size_t estimate_tokens(size_t byte_count) {
     return (byte_count / 7) * 2 + ((byte_count % 7) * 2) / 7;
 }
 
-static int write_text(FILE* out, const char* text) {
-    return (fputs(text, out) == EOF) ? -1 : 0;
-}
-
 static int write_bytes(FILE* out, const void* data, size_t len) {
     return (fwrite(data, 1, len, out) == len) ? 0 : -1;
 }
@@ -82,29 +79,29 @@ static int write_markdown_path(FILE* out, const char* path) {
     for (const unsigned char* p = (const unsigned char*)path; *p != '\0'; p++) {
         unsigned char c = *p;
         if (c == '&') {
-            if (write_text(out, "&amp;") != 0) return -1;
+            if (fuori_write_text(out, "&amp;") != 0) return -1;
             continue;
         }
         if (c == '<') {
-            if (write_text(out, "&lt;") != 0) return -1;
+            if (fuori_write_text(out, "&lt;") != 0) return -1;
             continue;
         }
         if (c == '\n') {
-            if (write_text(out, "\\n") != 0) return -1;
+            if (fuori_write_text(out, "\\n") != 0) return -1;
             continue;
         }
         if (c == '\r') {
-            if (write_text(out, "\\r") != 0) return -1;
+            if (fuori_write_text(out, "\\r") != 0) return -1;
             continue;
         }
         if (c == '\t') {
-            if (write_text(out, "\\t") != 0) return -1;
+            if (fuori_write_text(out, "\\t") != 0) return -1;
             continue;
         }
         if ((c < 0x20 || c == 0x7f)) {
             char escaped[5];
             if (snprintf(escaped, sizeof(escaped), "\\x%02X", c) < 0 ||
-                write_text(out, escaped) != 0) {
+                fuori_write_text(out, escaped) != 0) {
                 return -1;
             }
             continue;
@@ -117,10 +114,6 @@ static int write_markdown_path(FILE* out, const char* path) {
         }
     }
     return 0;
-}
-
-static int count_text_bytes(size_t* total, const char* text) {
-    return add_size(total, strlen(text));
 }
 
 static int count_markdown_path_bytes(size_t* total, const char* path) {
@@ -163,16 +156,16 @@ static int write_fence(FILE* out, size_t count, const char* lang) {
     for (size_t i = 0; i < count; i++) {
         if (fputc('`', out) == EOF) return -1;
     }
-    if (lang && *lang && write_text(out, lang) != 0) return -1;
+    if (lang && *lang && fuori_write_text(out, lang) != 0) return -1;
     return (fputc('\n', out) == EOF) ? -1 : 0;
 }
 
 int write_export_header(FILE* out, FileSelectionMode mode) {
-    if (write_text(out, "# Codebase Export\n\n") != 0) {
+    if (fuori_write_text(out, "# Codebase Export\n\n") != 0) {
         return -1;
     }
 
-    return write_text(out, export_description(mode));
+    return fuori_write_text(out, export_description(mode));
 }
 
 static size_t compute_fence_length(const ExportEntry* entry) {
@@ -240,9 +233,9 @@ static int get_fence_length(const RenderPlanInfo* info, size_t index, size_t* fe
 }
 
 static int count_entry_bytes(const ExportEntry* entry, size_t fence, size_t* total) {
-    if (count_text_bytes(total, "## ") != 0 ||
+    if (fuori_count_text_bytes(total, "## ") != 0 ||
         count_markdown_path_bytes(total, entry->display_path) != 0 ||
-        count_text_bytes(total, "\n\n") != 0 ||
+        fuori_count_text_bytes(total, "\n\n") != 0 ||
         count_fence_bytes(total, fence, entry->lang) != 0 ||
         add_size(total, entry->buf_len) != 0) {
         return -1;
@@ -252,7 +245,7 @@ static int count_entry_bytes(const ExportEntry* entry, size_t fence, size_t* tot
         return -1;
     }
     if (count_fence_bytes(total, fence, NULL) != 0 ||
-        count_text_bytes(total, "\n\n") != 0) {
+        fuori_count_text_bytes(total, "\n\n") != 0) {
         return -1;
     }
     return 0;
@@ -271,8 +264,8 @@ int calculate_export_metrics(const ExportPlan* plan,
         return -1;
     }
 
-    if (count_text_bytes(&total, "# Codebase Export\n\n") != 0 ||
-        count_text_bytes(&total, export_description(mode)) != 0) {
+    if (fuori_count_text_bytes(&total, "# Codebase Export\n\n") != 0 ||
+        fuori_count_text_bytes(&total, export_description(mode)) != 0) {
         return -1;
     }
 
@@ -295,9 +288,9 @@ int calculate_export_metrics(const ExportPlan* plan,
 }
 
 static int render_entry(FILE* out, const ExportEntry* entry, size_t fence) {
-    if (write_text(out, "## ") != 0 ||
+    if (fuori_write_text(out, "## ") != 0 ||
         write_markdown_path(out, entry->display_path) != 0 ||
-        write_text(out, "\n\n") != 0) {
+        fuori_write_text(out, "\n\n") != 0) {
         return -1;
     }
     if (write_fence(out, fence, entry->lang) != 0) {
@@ -306,11 +299,11 @@ static int render_entry(FILE* out, const ExportEntry* entry, size_t fence) {
     if (entry->buf_len > 0 && write_bytes(out, entry->buf, entry->buf_len) != 0) {
         return -1;
     }
-    if (entry->buf_len > 0 && entry->buf[entry->buf_len - 1] != '\n' && write_text(out, "\n") != 0) {
+    if (entry->buf_len > 0 && entry->buf[entry->buf_len - 1] != '\n' && fuori_write_text(out, "\n") != 0) {
         return -1;
     }
     if (write_fence(out, fence, NULL) != 0 ||
-        write_text(out, "\n\n") != 0) {
+        fuori_write_text(out, "\n\n") != 0) {
         return -1;
     }
     return 0;
