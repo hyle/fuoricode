@@ -151,6 +151,24 @@ fi
 assert_contains "$FAIL_DIR/write_failure_stderr.txt" "Error moving temporary file to final destination"
 assert_no_temp_outputs "$FAIL_DIR"
 
+RENDER_FAIL_DIR="$TMPDIR/render_failure"
+mkdir -p "$RENDER_FAIL_DIR"
+cat >"$RENDER_FAIL_DIR/a.c" <<'EOF_RENDER_A'
+int a(void) { return 1; }
+EOF_RENDER_A
+cat >"$RENDER_FAIL_DIR/b.c" <<'EOF_RENDER_B'
+int b(void) { return 2; }
+EOF_RENDER_B
+cat >"$RENDER_FAIL_DIR/export.md" <<'EOF_RENDER_EXISTING'
+original artifact
+EOF_RENDER_EXISTING
+if (cd "$RENDER_FAIL_DIR" && FUORI_TEST_FAIL_RENDER_AT=1 "$BIN" -o export.md >/dev/null 2>render_failure_stderr.txt); then
+    fail "expected render failure to abort export"
+fi
+assert_contains "$RENDER_FAIL_DIR/render_failure_stderr.txt" "Error processing export files"
+assert_file_equals "$RENDER_FAIL_DIR/export.md" "original artifact"
+assert_no_temp_outputs "$RENDER_FAIL_DIR"
+
 PERM_DIR="$TMPDIR/permissions"
 mkdir -p "$PERM_DIR"
 cat >"$PERM_DIR/main.c" <<'EOF_PERM_MAIN'
