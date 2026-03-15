@@ -146,6 +146,14 @@ int main(void) {
             .is_dir = 0,
             .expected = 0,
             .patterns = {"**/*.pyc", "!src/keep.pyc", NULL}
+        },
+        {
+            .name = "ignored parent blocks basename negation",
+            .path = "build/keep.txt",
+            .is_dir = 0,
+            .initial_ignored = 1,
+            .expected = 1,
+            .patterns = {"build/", "!keep.txt", NULL}
         }
     };
 

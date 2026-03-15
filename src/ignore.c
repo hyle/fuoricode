@@ -292,6 +292,10 @@ int resolve_ignore_state(const char* filepath,
         }
 
         if (!pattern->use_path_match) {
+            /* Basename negations should not resurrect descendants of an ignored directory. */
+            if (initial_ignored && pattern->negated) {
+                continue;
+            }
             if (fnmatch(pattern->match_pattern, base, 0) == 0) {
                 ignored = !pattern->negated;
             }
