@@ -1,47 +1,46 @@
 # fuoricode
 
-Export the right slice of a codebase into a single Markdown artifact that is easy to hand to an LLM.
+A command-line tool that exports codebases into single Markdown artifacts optimized for LLM context and code review workflows. 
 
 ```bash
 fuori --staged -o review.md
 ```
 
-Built for the boring but important job of turning a real working tree into clean, reviewable context without manual copy-paste.
+Turns your messy working tree into clean, auditable context. Zero copy-paste, zero noise.
 
 ## When to use it
 
-- Prepare context for an LLM without pasting files by hand
+- Pack codebase context for an LLM without pasting files by hand
 - Review staged changes as one artifact before a commit or PR
 - Snapshot a subtree for debugging, discussion, or handoff
 
 ## How it works
 
-1. Select files from Git or the filesystem, depending on the mode
-2. Filter out unsafe or non-exportable content such as binaries, oversized files, symlinks, and generated output targets
+1. Select files from Git or the filesystem depending on the modee
+2. Strip out anything non-exportable such as binaries, oversized files, symlinks
 3. Render one Markdown artifact with a project tree, per-file headings, and fenced code blocks
 
 ## Features
 
-- **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants
+- LLM context packing: export a codebase into one Markdown artifact, ready for any AI assistant
 - Auto-detects Git worktrees by default and falls back to recursive filesystem scanning elsewhere
 - Git-aware file selection via the default worktree mode, `--staged`, `--unstaged`, or `--diff <range>`
 - Caller-supplied file selection via `--from-stdin`, with optional NUL-delimited parsing via `-0` / `--null`
+- Respects `.gitignore` rules in Git-backed modes and local ignore rules in filesystem mode
 - Includes a project tree that matches the exported artifact
-- Respects Git ignore rules in Git-backed modes and local ignore rules in filesystem mode
-- Automatically detects and excludes binary files
-- Excludes files larger than 100KB (configurable)
+- Binary file auto-detection and exclusion
+- Configurable file size cap (default: 100 KB)
 - Formats code in Markdown with appropriate language identifiers
-- Estimates final artifact token usage with a conservative 3.5 chars/token heuristic
+- Estimates final artifact token usage with a chars/token heuristic
+- Warns or hard-fails when estimated tokens exceed a configurable threshold
 - Outputs to `_export.md` by default (configurable, including stdout)
 - Simple C implementation that is easy to inspect and review
 - Zero dependencies, plain C99 + POSIX, compiles in seconds on almost anything
-- Tiny footprint, fast execution even on large projects
 
 ## Requirements
 
-- A C compiler supporting C99 (project is built with `-std=c99`)
-- POSIX.1-2008 environment/APIs (project is built with `-D_POSIX_C_SOURCE=200809L`)
-- Unix-like environment (Linux, macOS, WSL, etc.)
+- A C compiler supporting C99
+- PPOSIX.1-2008 environment (Linux, macOS, WSL, etc.)
 
 ## Install
 
@@ -52,115 +51,71 @@ brew tap hyle/tap
 brew install fuoricode
 ```
 
-This installs the `fuori` command, with `fuoricode` also available as an alias.
+Installs `fuori`, with `fuoricode` available as an alias.
 
 ### From source
 
 ```bash
-# System-wide (often requires sudo)
+# System-wide
 make install PREFIX=/usr/local
 
-# User-local install
+# User-local
 make install PREFIX="$HOME/.local"
 ```
 
 ## Usage
 
-Run `fuori` in any directory you want to export:
+Run `fuori` in any directory:
 
 ```bash
 fuori
 ```
 
-By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format. Inside a Git repository, it prefers Git's view of the current subtree (tracked files plus untracked non-ignored files); outside a repository, or when you pass `--no-git`, it falls back to the recursive filesystem walker.
+By default, it writes `_export.md` to the current directory. Inside a Git repo, it uses Git's view of the working tree (tracked + untracked non-ignored files). Outside a repo, or with `--no-git`, it falls back to the recursive filesystem walking.
 
-Contributor-oriented design notes live in [`docs/design.md`](docs/design.md).
+Design notes for contributors live in [`docs/design.md`](docs/design.md).
 
-### Command Line Options
+### Options
 
 ```bash
 fuori [OPTIONS]
 ```
 
 **Options:**
-- `-h, --help`: Display help message
-- `-V, --version`: Show version information
-- `-v, --verbose`: Show progress information during processing
-- `-o, --output <path>`: Set output path (use `-` for stdout)
-- `--no-clobber`: Fail if output file already exists
-- `--no-git`: Force recursive filesystem selection instead of the default auto-Git behavior
-- `--from-stdin`: Read paths from stdin instead of using Git or the filesystem
-- `--staged`: Export staged files from the current Git subtree
-- `--unstaged`: Export unstaged tracked files from the current Git subtree
-- `--diff <range>` / `--diff=<range>`: Export files changed by a Git diff range
-- `-0, --null`: Use NUL as the input record delimiter (requires `--from-stdin`)
-- `--tree`: Include the project tree section (default)
-- `--no-tree`: Omit the project tree section
-- `--tree-depth <n>` / `--tree-depth=<n>`: Limit tree rendering depth to `n` levels
-- `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
-- `--warn-tokens <n>` / `--warn-tokens=<n>`: Warn if the estimated token count exceeds `n` (default: 200000)
-- `--max-tokens <n>` / `--max-tokens=<n>`: Fail before writing output if the estimated token count exceeds `n`
 
-`--from-stdin`, `--staged`, `--unstaged`, and `--diff` are mutually exclusive. `--no-git` cannot be combined with any of those explicit selection modes.
+| Flag                    | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `-h`, `--help`          | Display help                                |
+| `-V`, `--version`       | Show version                                |
+| `-v`, `--verbose`       | Show progress during export                 |
+| `-o`, `--output <path>` | Output path (`-` for stdout)                |
+| `--no-clobber`          | Fail if output already exists               |
+| `--no-git`              | Force filesystem selection                  |
+| `--from-stdin`          | Read paths from stdin instead of Git        |
+| `--staged`              | Export staged files                         |
+| `--unstaged`            | Export unstaged tracked files               |
+| `--diff <range>`        | Export files changed in a diff range        |
+| `--tree` / `--no-tree`  | Include/omit the project tree (default: on) |
+| `--tree-depth <n>`      | Limit tree render depth                     |
+| `-s <size_kb>`          | Max file size in KB (default: 100)          |
+| `--warn-tokens <n>`     | Warn above token threshold (default: 200k)  |
+| `--max-tokens <n>`      | Hard-fail above token threshold             |
+
+Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 
 **Examples:**
 ```bash
-# Basic usage
-fuori
-
-# Show help
-fuori --help
-
-# Force filesystem recursion even inside a Git repository
-fuori --no-git
-
-# Show version
-fuori --version
-
-# With verbose output
-fuori -v
-
-# With custom file size limit
-fuori -s 50
-
-# Write to a custom output path
-fuori -o exports/codebase.md
-
-# Write to stdout (useful in pipelines)
-fuori -o - > codebase.md
-
-# Prevent overwriting an existing output file
-fuori -o codebase.md --no-clobber
-
-# Export staged files only
-fuori --staged
-
-# Export without the tree section
-fuori --no-tree
-
-# Export with a shallow tree
-fuori --tree-depth 2
-
-# Export unstaged tracked files only
-fuori --unstaged
-
-# Export files changed in the last 3 commits
-fuori --diff HEAD~3..HEAD
-
-# Export files changed on the current branch since it diverged from main
-fuori --diff main...HEAD
-
-# Read newline-delimited paths from stdin
-printf 'src/main.c\nREADME.md\n' | fuori --from-stdin
-
-# Read NUL-delimited paths from stdin
-git ls-files -z -- src/ | fuori --from-stdin -0
-
-# Warn earlier for smaller context windows
-fuori --warn-tokens 100000
-
-# Refuse to write exports above a hard token budget
-fuori --max-tokens 180000
+fuori                              # Export current working tree
+fuori --staged -o review.md        # Staged changes to a named file
+fuori --diff HEAD~3..HEAD          # Files changed in the last 3 commits
+fuori --diff main...HEAD           # Changes since branching from main
+fuori -o - > codebase.md           # Pipe to stdout
+fuori --no-tree                    # Skip the project tree section
+fuori --tree-depth 2               # Shallow tree
+fuori -s 50                        # 50 KB file size cap
+fuori --warn-tokens 100000         # Earlier token warning
+fuori --max-tokens 180000          # Hard token budget
+fuori -o out.md --no-clobber       # Refuse to overwrite
 ```
 
 ## .gitignore File
@@ -271,7 +226,7 @@ The output markdown file will contain:
 5. Appropriate language identifiers for syntax highlighting
 6. A `stderr` summary of files, bytes, and estimated tokens after successful completion
 
-Example:
+Example file contents excerpt (the `Makefile` section is omitted for brevity):
 ````markdown
 # Codebase Export
 
@@ -284,8 +239,6 @@ This document contains all the source code files from the current directory subt
 │   └── main.c
 └── Makefile
 ```
-
-Example file contents excerpt (the `Makefile` section is omitted for brevity):
 
 ## src/main.c
 
