@@ -7,6 +7,34 @@
 
 #include "tree.h"
 
+#ifdef FUORI_TESTING
+static int maybe_inject_render_failure(size_t index) {
+    static int initialized = 0;
+    static int enabled = 0;
+    static size_t fail_index = 0;
+
+    if (!initialized) {
+        const char* value = getenv("FUORI_TEST_FAIL_RENDER_AT");
+        initialized = 1;
+        if (value && *value != '\0') {
+            char* end = NULL;
+            unsigned long parsed = strtoul(value, &end, 10);
+            if (end != value && *end == '\0') {
+                fail_index = (size_t)parsed;
+                enabled = 1;
+            }
+        }
+    }
+
+    if (enabled && index == fail_index) {
+        errno = EIO;
+        return -1;
+    }
+
+    return 0;
+}
+#endif
+
 static int add_size(size_t* total, size_t amount) {
     if (*total > SIZE_MAX - amount) {
         errno = EOVERFLOW;
@@ -297,13 +325,14 @@ int render_export_plan(FILE* out, const ExportPlan* plan, const RenderPlanInfo* 
         if (verbose) {
             fprintf(stderr, "Processing file: %s\n", plan->entries[i].display_path);
         }
+#ifdef FUORI_TESTING
+        if (maybe_inject_render_failure(i) != 0) {
+            return -1;
+        }
+#endif
         if (get_fence_length(info, i, &fence) != 0 ||
             render_entry(out, &plan->entries[i], fence) != 0) {
-            if (ferror(out)) {
-                perror("Error writing export output");
-                return -1;
-            }
-            fprintf(stderr, "Warning: Failed to render file %s\n", plan->entries[i].display_path);
+            return -1;
         }
     }
     return 0;

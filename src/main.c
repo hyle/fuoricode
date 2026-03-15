@@ -311,8 +311,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    errno = 0;
     if (render_export_plan(output_file, &plan, &render_info, ctx.verbose) != 0) {
-        fprintf(stderr, "Error processing export files\n");
+        if (errno != 0) {
+            perror("Error processing export files");
+        } else {
+            fprintf(stderr, "Error processing export files\n");
+        }
         goto cleanup;
     }
 
