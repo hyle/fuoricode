@@ -76,6 +76,37 @@ static void print_export_summary(const ExportMetrics* metrics) {
     fprintf(stderr, "Est. tokens:    ~%s  (approx, assuming BPE ~3.5 chars/token)\n", tokens_buf);
 }
 
+static void print_verbose_skip_summary(const AppContext* ctx) {
+    char binary_buf[32];
+    char large_buf[32];
+    char ignored_buf[32];
+    char symlink_buf[32];
+
+    if (!ctx || !ctx->verbose) {
+        return;
+    }
+
+    if (format_size_with_commas(ctx->skipped_binary, binary_buf, sizeof(binary_buf)) != 0 ||
+        format_size_with_commas(ctx->skipped_too_large, large_buf, sizeof(large_buf)) != 0 ||
+        format_size_with_commas(ctx->skipped_ignored, ignored_buf, sizeof(ignored_buf)) != 0 ||
+        format_size_with_commas(ctx->skipped_symlink, symlink_buf, sizeof(symlink_buf)) != 0) {
+        fprintf(stderr,
+                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu\n",
+                ctx->skipped_binary,
+                ctx->skipped_too_large,
+                ctx->skipped_ignored,
+                ctx->skipped_symlink);
+        return;
+    }
+
+    fprintf(stderr,
+            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s\n",
+            binary_buf,
+            large_buf,
+            ignored_buf,
+            symlink_buf);
+}
+
 static int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size) {
     char path_copy[MAX_PATH_LENGTH];
     if (!output_path || !tmpl || tmpl_size == 0) {
@@ -301,12 +332,15 @@ int main(int argc, char* argv[]) {
             goto cleanup;
         }
         temp_created = 0;
-        printf("Codebase exported to %s successfully!\n", ctx.output_path);
-    } else {
+        if (ctx.verbose) {
+            fprintf(stderr, "Codebase exported to %s successfully!\n", ctx.output_path);
+        }
+    } else if (ctx.verbose) {
         fprintf(stderr, "Codebase exported to stdout successfully!\n");
     }
 
     print_export_summary(&metrics);
+    print_verbose_skip_summary(&ctx);
 
     status = 0;
 

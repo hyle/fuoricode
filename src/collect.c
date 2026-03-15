@@ -292,27 +292,6 @@ static const char* get_language_identifier(const char* filepath,
     return NULL;
 }
 
-static int should_exclude_file(const char* filepath,
-                               const struct stat* st,
-                               size_t max_file_size,
-                               int ancestor_ignored,
-                               const IgnorePattern* patterns,
-                               size_t count) {
-    if (!S_ISREG(st->st_mode)) {
-        return 1;
-    }
-    if (st->st_size < 0) {
-        return 1;
-    }
-    if ((size_t)st->st_size > max_file_size) {
-        return 1;
-    }
-    if (resolve_ignore_state(filepath, patterns, count, 0, ancestor_ignored)) {
-        return 1;
-    }
-    return 0;
-}
-
 static int read_file_buffer(const char* filepath,
                             const struct stat* st,
                             size_t max_file_size,
@@ -520,24 +499,44 @@ static int collect_exportable_file(const char* open_path,
     }
 
     if (respect_ignore) {
-        if (should_exclude_file(open_path,
-                                st,
-                                ctx->max_file_size,
-                                ancestor_ignored,
-                                ctx->ignore_patterns,
-                                ctx->ignore_count)) {
+        if (st->st_size < 0) {
+            return 0;
+        }
+        if ((size_t)st->st_size > ctx->max_file_size) {
+            ctx->skipped_too_large++;
             if (ctx->verbose) {
-                fprintf(stderr, "Skipping file: %s\n", display_path);
+                fprintf(stderr, "Skipping oversized file: %s\n", display_path);
+            }
+            return 0;
+        }
+        if (resolve_ignore_state(open_path,
+                                 ctx->ignore_patterns,
+                                 ctx->ignore_count,
+                                 0,
+                                 ancestor_ignored)) {
+            ctx->skipped_ignored++;
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping ignored file: %s\n", display_path);
             }
             return 0;
         }
     } else if (st->st_size < 0 || (size_t)st->st_size > ctx->max_file_size) {
+        if (st->st_size >= 0 && (size_t)st->st_size > ctx->max_file_size) {
+            ctx->skipped_too_large++;
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping oversized file: %s\n", display_path);
+            }
+        }
         return 0;
     }
 
     /* Cache accepted file contents in memory to avoid re-reading at render time. */
     int read_result = read_file_buffer(open_path, st, ctx->max_file_size, &buffer, &bytes_read);
     if (read_result == 1) {
+        ctx->skipped_too_large++;
+        if (ctx->verbose) {
+            fprintf(stderr, "Skipping oversized file: %s\n", display_path);
+        }
         return 0;
     }
     if (read_result != 0) {
@@ -545,6 +544,7 @@ static int collect_exportable_file(const char* open_path,
         return 0;
     }
     if (bytes_read == 0 || is_binary_file(buffer, bytes_read)) {
+        ctx->skipped_binary++;
         if (ctx->verbose) {
             fprintf(stderr, "Skipping binary/empty file: %s\n", display_path);
         }
@@ -645,6 +645,10 @@ static int collect_recursive_paths(const char* base_path,
             continue;
         }
         if (S_ISLNK(st.st_mode)) {
+            ctx->skipped_symlink++;
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping symlink: %s\n", path);
+            }
             continue;
         }
 
@@ -655,6 +659,7 @@ static int collect_recursive_paths(const char* base_path,
                                                       1,
                                                       ancestor_ignored);
             if (dir_is_ignored) {
+                ctx->skipped_ignored++;
                 if (ctx->verbose) {
                     fprintf(stderr, "Skipping ignored directory: %s\n", path);
                 }
@@ -706,11 +711,17 @@ int collect_selected_export_plan(const SelectedPath* selected_paths,
             perror("Error getting selected file status");
             continue;
         }
+        if (S_ISLNK(st.st_mode)) {
+            ctx->skipped_symlink++;
+            if (ctx->verbose) {
+                fprintf(stderr, "Skipping symlink: %s\n", path->display_path);
+            }
+            continue;
+        }
         if (!S_ISREG(st.st_mode)) {
             continue;
         }
 
-        /* Symlinks are skipped inside collect_exportable_file via the S_ISREG guard above. */
         if (collect_exportable_file(path->open_path, path->display_path, &st, ctx, 0, 0, plan) != 0) {
             return -1;
         }
