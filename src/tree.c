@@ -125,6 +125,28 @@ static int count_visible_text_bytes(size_t* total, const char* text) {
     return 0;
 }
 
+static size_t max_backtick_run_in_text(const char* text) {
+    size_t max_run = 0;
+    size_t current_run = 0;
+
+    if (!text) {
+        return 0;
+    }
+
+    for (const unsigned char* p = (const unsigned char*)text; *p != '\0'; p++) {
+        if (*p == '`') {
+            current_run++;
+            if (current_run > max_run) {
+                max_run = current_run;
+            }
+        } else {
+            current_run = 0;
+        }
+    }
+
+    return max_run;
+}
+
 static TreeNode* tree_node_create(const char* name, int is_dir) {
     TreeNode* node = calloc(1, sizeof(*node));
     if (!node) {
@@ -220,6 +242,60 @@ static void sort_tree(TreeNode* node) {
     }
 }
 
+static size_t max_backtick_run_in_tree(const TreeNode* node) {
+    size_t max_run = max_backtick_run_in_text(node ? node->name : NULL);
+
+    if (!node) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < node->child_count; i++) {
+        size_t child_run = max_backtick_run_in_tree(node->children[i]);
+        if (child_run > max_run) {
+            max_run = child_run;
+        }
+    }
+
+    return max_run;
+}
+
+static size_t compute_tree_fence_length(const TreeNode* node) {
+    size_t max_run = max_backtick_run_in_tree(node);
+    return (max_run >= 3) ? max_run + 1 : 3;
+}
+
+static int write_tree_open_fence(FILE* out, size_t fence_len) {
+    for (size_t i = 0; i < fence_len; i++) {
+        if (fputc('`', out) == EOF) {
+            return -1;
+        }
+    }
+    return fuori_write_text(out, "text\n");
+}
+
+static int write_tree_close_fence(FILE* out, size_t fence_len) {
+    for (size_t i = 0; i < fence_len; i++) {
+        if (fputc('`', out) == EOF) {
+            return -1;
+        }
+    }
+    return fuori_write_text(out, "\n\n");
+}
+
+static int count_tree_open_fence_bytes(size_t* total, size_t fence_len) {
+    if (add_size(total, fence_len) != 0) {
+        return -1;
+    }
+    return add_size(total, strlen("text\n"));
+}
+
+static int count_tree_close_fence_bytes(size_t* total, size_t fence_len) {
+    if (add_size(total, fence_len) != 0) {
+        return -1;
+    }
+    return add_size(total, 2);
+}
+
 static int write_tree_children(FILE* out,
                                const TreeNode* node,
                                TreePrefixBuffer* prefix,
@@ -296,6 +372,7 @@ static int count_tree_children_bytes(const TreeNode* node,
 int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
     TreeNode* root = tree_node_create("", 1);
     TreePrefixBuffer prefix = {0};
+    size_t fence_len = 3;
     int result = -1;
     if (!root) {
         return -1;
@@ -308,8 +385,10 @@ int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
         }
     }
     sort_tree(root);
+    fence_len = compute_tree_fence_length(root);
 
-    if (fuori_write_text(out, "## Project Tree\n\n```text\n") != 0) {
+    if (fuori_write_text(out, "## Project Tree\n\n") != 0 ||
+        write_tree_open_fence(out, fence_len) != 0) {
         free_tree(root);
         return -1;
     }
@@ -328,7 +407,7 @@ int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
         }
     }
 
-    result = fuori_write_text(out, "```\n\n");
+    result = write_tree_close_fence(out, fence_len);
 
 cleanup:
     free(prefix.data);
@@ -338,6 +417,7 @@ cleanup:
 
 int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* total) {
     TreeNode* root = tree_node_create("", 1);
+    size_t fence_len = 3;
     if (!root) {
         return -1;
     }
@@ -349,8 +429,10 @@ int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* t
         }
     }
     sort_tree(root);
+    fence_len = compute_tree_fence_length(root);
 
-    if (fuori_count_text_bytes(total, "## Project Tree\n\n```text\n") != 0) {
+    if (fuori_count_text_bytes(total, "## Project Tree\n\n") != 0 ||
+        count_tree_open_fence_bytes(total, fence_len) != 0) {
         free_tree(root);
         return -1;
     }
@@ -366,5 +448,5 @@ int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* t
     }
 
     free_tree(root);
-    return fuori_count_text_bytes(total, "```\n\n");
+    return count_tree_close_fence_bytes(total, fence_len);
 }

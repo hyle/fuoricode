@@ -33,7 +33,8 @@ static int build_plan(ExportPlan* plan) {
     static const char* const paths[] = {
         "alpha/deep/leaf.txt",
         "alpha/shallow.txt",
-        "beta.txt"
+        "beta.txt",
+        "tick/```name.txt"
     };
 
     memset(plan, 0, sizeof(*plan));
@@ -139,13 +140,18 @@ int main(void) {
     failures += assert_contains(full_output, "├── alpha\n", "root alpha branch");
     failures += assert_contains(full_output, "│   ├── deep\n", "nested deep branch");
     failures += assert_contains(full_output, "│   └── shallow.txt\n", "sibling shallow branch");
+    failures += assert_contains(full_output, "├── tick\n", "backtick directory branch");
+    failures += assert_contains(full_output, "│   └── ```name.txt\n", "backtick filename branch");
     failures += assert_contains(full_output, "└── beta.txt\n", "root beta sibling");
     failures += assert_not_contains(full_output, "│       └── shallow.txt\n", "leaked deep prefix");
+    failures += assert_contains(full_output, "````text\n", "expanded tree fence");
 
     failures += assert_contains(shallow_output, "├── alpha\n", "depth-limited alpha");
+    failures += assert_contains(shallow_output, "├── tick\n", "depth-limited tick");
     failures += assert_contains(shallow_output, "└── beta.txt\n", "depth-limited beta");
     failures += assert_not_contains(shallow_output, "deep\n", "depth-limited deep omission");
     failures += assert_not_contains(shallow_output, "shallow.txt\n", "depth-limited shallow omission");
+    failures += assert_contains(shallow_output, "````text\n", "depth-limited expanded tree fence");
 
     free(full_output);
     free(shallow_output);

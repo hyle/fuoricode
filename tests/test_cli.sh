@@ -212,6 +212,28 @@ assert_contains "$ODD_DIR/odd_stdout.txt" "## file with spaces\\.txt"
 assert_contains "$ODD_DIR/odd_stdout.txt" "## café\\.py"
 assert_contains "$ODD_DIR/odd_stdout.txt" "## weird &amp; &lt;name\\>\\.txt"
 
+TREE_FENCE_DIR="$TMPDIR/tree_fence"
+mkdir -p "$TREE_FENCE_DIR/src"
+TREE_FENCE_FILE="$TREE_FENCE_DIR/src/"'```name.c'
+cat >"$TREE_FENCE_FILE" <<'EOF_TREE_FENCE'
+int tree_fence(void) { return 0; }
+EOF_TREE_FENCE
+(cd "$TREE_FENCE_DIR" && "$BIN" -o - >tree_fence_stdout.txt 2>tree_fence_stderr.txt)
+assert_contains "$TREE_FENCE_DIR/tree_fence_stdout.txt" '````text'
+assert_contains "$TREE_FENCE_DIR/tree_fence_stdout.txt" '└── ```name.c'
+
+IGNORE_NEGATION_DIR="$TMPDIR/ignore_negation"
+mkdir -p "$IGNORE_NEGATION_DIR/build"
+cat >"$IGNORE_NEGATION_DIR/.gitignore" <<'EOF_IGNORE_NEGATION'
+build/
+!keep.txt
+EOF_IGNORE_NEGATION
+cat >"$IGNORE_NEGATION_DIR/build/keep.txt" <<'EOF_IGNORE_KEEP'
+keep
+EOF_IGNORE_KEEP
+(cd "$IGNORE_NEGATION_DIR" && "$BIN" --no-git -o - >ignore_negation_stdout.txt 2>ignore_negation_stderr.txt)
+assert_not_contains "$IGNORE_NEGATION_DIR/ignore_negation_stdout.txt" "build/keep\\.txt"
+
 STDIN_DIR="$TMPDIR/stdin_selection"
 mkdir -p "$STDIN_DIR/ignored"
 cat >"$STDIN_DIR/.gitignore" <<'EOF_STDIN_IGNORE'
