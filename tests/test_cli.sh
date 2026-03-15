@@ -202,6 +202,18 @@ assert_contains "$ODD_DIR/odd_stdout.txt" "## file with spaces\\.txt"
 assert_contains "$ODD_DIR/odd_stdout.txt" "## café\\.py"
 assert_contains "$ODD_DIR/odd_stdout.txt" "## weird &amp; &lt;name\\>\\.txt"
 
+NEGATE_DIR="$TMPDIR/negated_restore"
+mkdir -p "$NEGATE_DIR/build"
+cat >"$NEGATE_DIR/.gitignore" <<'EOF_NEGATE_IGNORE'
+build/
+!build/keep.txt
+EOF_NEGATE_IGNORE
+cat >"$NEGATE_DIR/build/keep.txt" <<'EOF_NEGATE_KEEP'
+restored
+EOF_NEGATE_KEEP
+(cd "$NEGATE_DIR" && "$BIN" --no-git -o - >negated_stdout.txt 2>negated_stderr.txt)
+assert_contains "$NEGATE_DIR/negated_stdout.txt" "## build/keep\\.txt"
+
 REPO="$TMPDIR/repo"
 mkdir -p "$REPO/sub"
 (cd "$REPO" && git init -q)

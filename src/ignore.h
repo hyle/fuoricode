@@ -20,6 +20,9 @@ int resolve_ignore_state(const char* filepath,
                          size_t count,
                          int is_dir,
                          int initial_ignored);
+int ignored_directory_may_have_included_descendants(const char* dirpath,
+                                                    const IgnorePattern* patterns,
+                                                    size_t count);
 int load_ignore_patterns(const char* ignore_file, IgnorePattern** patterns, size_t* count);
 void free_ignore_patterns(IgnorePattern* patterns, size_t count);
 
