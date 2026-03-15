@@ -18,6 +18,12 @@ typedef struct TreeNode {
     size_t child_capacity;
 } TreeNode;
 
+typedef struct {
+    char* data;
+    size_t len;
+    size_t cap;
+} TreePrefixBuffer;
+
 static int add_size(size_t* total, size_t amount) {
     if (*total > SIZE_MAX - amount) {
         errno = EOVERFLOW;
@@ -29,6 +35,50 @@ static int add_size(size_t* total, size_t amount) {
 
 static int write_text(FILE* out, const char* text) {
     return (fputs(text, out) == EOF) ? -1 : 0;
+}
+
+static int ensure_prefix_capacity(TreePrefixBuffer* prefix, size_t needed_len) {
+    if (!prefix) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (needed_len + 1 <= prefix->cap) {
+        return 0;
+    }
+
+    size_t new_cap = (prefix->cap > 0) ? prefix->cap : 16;
+    while (new_cap < needed_len + 1) {
+        if (new_cap > SIZE_MAX / 2) {
+            new_cap = needed_len + 1;
+            break;
+        }
+        new_cap *= 2;
+    }
+
+    char* new_data = realloc(prefix->data, new_cap);
+    if (!new_data) {
+        return -1;
+    }
+    prefix->data = new_data;
+    prefix->cap = new_cap;
+    return 0;
+}
+
+static int append_prefix_segment(TreePrefixBuffer* prefix, const char* segment) {
+    size_t segment_len = strlen(segment);
+    size_t needed_len = prefix->len + segment_len;
+    if (needed_len < prefix->len) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    if (ensure_prefix_capacity(prefix, needed_len) != 0) {
+        return -1;
+    }
+
+    memcpy(prefix->data + prefix->len, segment, segment_len);
+    prefix->len = needed_len;
+    prefix->data[prefix->len] = '\0';
+    return 0;
 }
 
 static int count_text_bytes(size_t* total, const char* text) {
@@ -178,14 +228,14 @@ static void sort_tree(TreeNode* node) {
 
 static int write_tree_children(FILE* out,
                                const TreeNode* node,
-                               const char* prefix,
+                               TreePrefixBuffer* prefix,
                                size_t depth,
                                size_t max_depth) {
     for (size_t i = 0; i < node->child_count; i++) {
         const TreeNode* child = node->children[i];
         int is_last = (i + 1 == node->child_count);
 
-        if (write_text(out, prefix) != 0 ||
+        if (write_text(out, prefix->data ? prefix->data : "") != 0 ||
             write_text(out, is_last ? TREE_LAST : TREE_BRANCH) != 0 ||
             write_visible_text(out, child->name) != 0 ||
             write_text(out, "\n") != 0) {
@@ -196,17 +246,15 @@ static int write_tree_children(FILE* out,
             child->child_count > 0 &&
             (max_depth == SIZE_MAX || depth < max_depth)) {
             const char* segment = is_last ? TREE_SPACE : TREE_PIPE;
-            size_t prefix_len = strlen(prefix);
-            size_t segment_len = strlen(segment);
-            char* next_prefix = malloc(prefix_len + segment_len + 1);
-            if (!next_prefix) {
+            size_t saved_len = prefix->len;
+            if (append_prefix_segment(prefix, segment) != 0) {
                 return -1;
             }
-            memcpy(next_prefix, prefix, prefix_len);
-            memcpy(next_prefix + prefix_len, segment, segment_len + 1);
-
-            int result = write_tree_children(out, child, next_prefix, depth + 1, max_depth);
-            free(next_prefix);
+            int result = write_tree_children(out, child, prefix, depth + 1, max_depth);
+            prefix->len = saved_len;
+            if (prefix->data) {
+                prefix->data[prefix->len] = '\0';
+            }
             if (result != 0) {
                 return -1;
             }
@@ -253,6 +301,8 @@ static int count_tree_children_bytes(const TreeNode* node,
 
 int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
     TreeNode* root = tree_node_create("", 1);
+    TreePrefixBuffer prefix = {0};
+    int result = -1;
     if (!root) {
         return -1;
     }
@@ -272,16 +322,24 @@ int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
 
     if (root->child_count == 0) {
         if (write_text(out, "(no exported files)\n") != 0) {
-            free_tree(root);
-            return -1;
+            goto cleanup;
         }
-    } else if (write_tree_children(out, root, "", 1, max_depth) != 0) {
-        free_tree(root);
-        return -1;
+    } else {
+        if (ensure_prefix_capacity(&prefix, 0) != 0) {
+            goto cleanup;
+        }
+        prefix.data[0] = '\0';
+        if (write_tree_children(out, root, &prefix, 1, max_depth) != 0) {
+            goto cleanup;
+        }
     }
 
+    result = write_text(out, "```\n\n");
+
+cleanup:
+    free(prefix.data);
     free_tree(root);
-    return write_text(out, "```\n\n");
+    return result;
 }
 
 int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* total) {

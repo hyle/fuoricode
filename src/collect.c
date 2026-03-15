@@ -92,28 +92,6 @@ void free_export_plan(ExportPlan* plan) {
     plan->capacity = 0;
 }
 
-static void sanitize_path(char* path) {
-    char* src = path;
-    char* dst = path;
-
-    while (*src) {
-        *dst = *src;
-        if (*src == '/') {
-            while (*(src + 1) == '/') {
-                src++;
-            }
-        }
-        src++;
-        dst++;
-    }
-    *dst = '\0';
-
-    size_t len = strlen(path);
-    if (len > 1 && path[len - 1] == '/') {
-        path[len - 1] = '\0';
-    }
-}
-
 static int is_likely_utf8(const unsigned char* s, size_t n) {
     size_t i = 0;
     while (i < n) {
@@ -629,7 +607,13 @@ static int collect_recursive_paths(const char* base_path,
 
     for (size_t i = 0; i < name_count; i++) {
         const char* name = names[i];
-        int path_len = snprintf(path, sizeof(path), "%s/%s", base_path, name);
+        size_t base_len = strlen(base_path);
+        int use_direct_concat = (base_len > 0 && base_path[base_len - 1] == '/');
+        int path_len = snprintf(path,
+                                sizeof(path),
+                                use_direct_concat ? "%s%s" : "%s/%s",
+                                base_path,
+                                name);
         if (path_len < 0 || (size_t)path_len >= sizeof(path)) {
             if (ctx->verbose) {
                 fprintf(stderr, "Skipping path that exceeds %zu bytes: %s/%s\n",
@@ -637,7 +621,6 @@ static int collect_recursive_paths(const char* base_path,
             }
             continue;
         }
-        sanitize_path(path);
 
         struct stat st;
         if (lstat(path, &st) == -1) {

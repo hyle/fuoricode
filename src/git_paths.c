@@ -116,7 +116,7 @@ static int run_command_capture(const char* const argv[],
             goto cleanup;
         }
         if (used + (size_t)read_len > capacity) {
-            size_t new_capacity = (capacity == 0) ? 4096 : capacity;
+            size_t new_capacity = (capacity == 0) ? 65536 : capacity;
             while (new_capacity < used + (size_t)read_len) {
                 if (new_capacity > SIZE_MAX / 2) {
                     new_capacity = used + (size_t)read_len;

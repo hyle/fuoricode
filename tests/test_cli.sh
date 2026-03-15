@@ -43,6 +43,14 @@ assert_missing() {
     fi
 }
 
+assert_no_temp_outputs() {
+    dir=$1
+    set -- "$dir"/.fuori.tmp.*
+    if [ -e "$1" ]; then
+        fail "did not expect temporary output artifacts in $dir"
+    fi
+}
+
 TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/fuori-cli-test.XXXXXX")
 trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
@@ -123,6 +131,50 @@ if (cd "$TOKEN_DIR" && "$BIN" --max-tokens 1 -o blocked.md >/dev/null 2>max_toke
 fi
 assert_contains "$TOKEN_DIR/max_tokens_existing_stderr.txt" "Error: estimated output is"
 assert_file_equals "$TOKEN_DIR/blocked.md" "original content"
+
+FAIL_DIR="$TMPDIR/write_failure"
+mkdir -p "$FAIL_DIR/blocked"
+cat >"$FAIL_DIR/main.c" <<'EOF_FAIL_MAIN'
+int main(void) { return 0; }
+EOF_FAIL_MAIN
+if (cd "$FAIL_DIR" && "$BIN" -o blocked >/dev/null 2>write_failure_stderr.txt); then
+    fail "expected rename failure when output path is a directory"
+fi
+assert_contains "$FAIL_DIR/write_failure_stderr.txt" "Error moving temporary file to final destination"
+assert_no_temp_outputs "$FAIL_DIR"
+
+PERM_DIR="$TMPDIR/permissions"
+mkdir -p "$PERM_DIR"
+cat >"$PERM_DIR/main.c" <<'EOF_PERM_MAIN'
+int main(void) { return 0; }
+EOF_PERM_MAIN
+cat >"$PERM_DIR/private.txt" <<'EOF_PERM_PRIVATE'
+secret
+EOF_PERM_PRIVATE
+chmod 000 "$PERM_DIR/private.txt"
+(cd "$PERM_DIR" && "$BIN" -o - >permission_stdout.txt 2>permission_stderr.txt)
+assert_contains "$PERM_DIR/permission_stdout.txt" "## main\\.c"
+assert_not_contains "$PERM_DIR/permission_stdout.txt" "private.txt"
+assert_contains "$PERM_DIR/permission_stderr.txt" "Warning: Failed to process file ./private.txt"
+
+ODD_DIR="$TMPDIR/odd_paths"
+mkdir -p "$ODD_DIR"
+cat >"$ODD_DIR/main.c" <<'EOF_ODD_MAIN'
+int main(void) { return 0; }
+EOF_ODD_MAIN
+cat >"$ODD_DIR/file with spaces.txt" <<'EOF_ODD_SPACE'
+spaces
+EOF_ODD_SPACE
+cat >"$ODD_DIR/café.py" <<'EOF_ODD_UTF8'
+print("coffee")
+EOF_ODD_UTF8
+cat >"$ODD_DIR/weird & <name>.txt" <<'EOF_ODD_ESCAPED'
+symbols
+EOF_ODD_ESCAPED
+(cd "$ODD_DIR" && "$BIN" -o - >odd_stdout.txt 2>"$TMPDIR/odd_paths_stderr.txt")
+assert_contains "$ODD_DIR/odd_stdout.txt" "## file with spaces\\.txt"
+assert_contains "$ODD_DIR/odd_stdout.txt" "## café\\.py"
+assert_contains "$ODD_DIR/odd_stdout.txt" "## weird &amp; &lt;name\\>\\.txt"
 
 REPO="$TMPDIR/repo"
 mkdir -p "$REPO/sub"
