@@ -18,6 +18,12 @@ Run:
 
 For behavior changes, also do a manual sanity check of the affected code path.
 
+Repository layout:
+
+- production code lives in `src/`
+- test assets live in `tests/`
+- project-level docs and build files stay at the repo root
+
 ## Scope
 
 Please keep changes aligned with the project's goals:

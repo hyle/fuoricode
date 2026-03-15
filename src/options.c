@@ -51,10 +51,11 @@ void print_usage(const char* argv0) {
     printf("Export codebase to markdown file.\n");
     printf("Default mode uses Git's worktree view when available and falls back to a recursive filesystem walk.\n\n");
     printf("Options:\n");
+    printf("  -h, --help          Show this help message\n");
     printf("  -V, --version       Show version information\n");
     printf("  -v, --verbose       Show progress information\n");
-    printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
     printf("  -o, --output        Set output path (use '-' for stdout)\n");
+    printf("      --no-clobber    Fail if output file already exists\n");
     printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
     printf("      --staged        Export staged files from the current Git subtree\n");
     printf("      --unstaged      Export unstaged tracked files from the current Git subtree\n");
@@ -63,11 +64,10 @@ void print_usage(const char* argv0) {
     printf("      --tree          Include a directory tree section (default)\n");
     printf("      --no-tree       Omit the directory tree section\n");
     printf("      --tree-depth    Limit tree rendering depth to N levels\n");
+    printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
     printf("      --warn-tokens   Warn if estimated tokens exceed N (default: %d)\n",
            DEFAULT_WARN_TOKENS);
     printf("      --max-tokens    Fail if estimated tokens exceed N\n");
-    printf("      --no-clobber    Fail if output file already exists\n");
-    printf("  -h, --help          Show this help message\n");
 }
 
 int parse_cli_options(int argc, char* argv[], CliOptions* options) {
