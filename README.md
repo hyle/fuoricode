@@ -25,6 +25,7 @@ Built for the boring but important job of turning a real working tree into clean
 - **Context packing for LLMs**: export a codebase into a single Markdown artifact for AI assistants
 - Auto-detects Git worktrees by default and falls back to recursive filesystem scanning elsewhere
 - Git-aware file selection via the default worktree mode, `--staged`, `--unstaged`, or `--diff <range>`
+- Caller-supplied file selection via `--from-stdin`, with optional NUL-delimited parsing via `-0` / `--null`
 - Includes a project tree that matches the exported artifact
 - Respects Git ignore rules in Git-backed modes and local ignore rules in filesystem mode
 - Automatically detects and excludes binary files
@@ -88,9 +89,11 @@ fuori [OPTIONS]
 - `-o, --output <path>`: Set output path (use `-` for stdout)
 - `--no-clobber`: Fail if output file already exists
 - `--no-git`: Force recursive filesystem selection instead of the default auto-Git behavior
+- `--from-stdin`: Read paths from stdin instead of using Git or the filesystem
 - `--staged`: Export staged files from the current Git subtree
 - `--unstaged`: Export unstaged tracked files from the current Git subtree
 - `--diff <range>` / `--diff=<range>`: Export files changed by a Git diff range
+- `-0, --null`: Use NUL as the input record delimiter (requires `--from-stdin`)
 - `--tree`: Include the project tree section (default)
 - `--no-tree`: Omit the project tree section
 - `--tree-depth <n>` / `--tree-depth=<n>`: Limit tree rendering depth to `n` levels
@@ -98,7 +101,7 @@ fuori [OPTIONS]
 - `--warn-tokens <n>` / `--warn-tokens=<n>`: Warn if the estimated token count exceeds `n` (default: 200000)
 - `--max-tokens <n>` / `--max-tokens=<n>`: Fail before writing output if the estimated token count exceeds `n`
 
-Git file-selection modes are mutually exclusive: use at most one of `--staged`, `--unstaged`, or `--diff`. `--no-git` cannot be combined with those explicit Git selection flags.
+`--from-stdin`, `--staged`, `--unstaged`, and `--diff` are mutually exclusive. `--no-git` cannot be combined with any of those explicit selection modes.
 
 **Examples:**
 ```bash
@@ -146,6 +149,12 @@ fuori --diff HEAD~3..HEAD
 
 # Export files changed on the current branch since it diverged from main
 fuori --diff main...HEAD
+
+# Read newline-delimited paths from stdin
+printf 'src/main.c\nREADME.md\n' | fuori --from-stdin
+
+# Read NUL-delimited paths from stdin
+git ls-files -z -- src/ | fuori --from-stdin -0
 
 # Warn earlier for smaller context windows
 fuori --warn-tokens 100000
@@ -199,6 +208,29 @@ Additional semantics:
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
 - If Git selects no files, `fuori` still succeeds and writes only the normal export header
+
+## Stdin File Selection
+
+Use `--from-stdin` when another tool should decide which paths to export.
+
+```bash
+# newline-delimited (default)
+fd -e c -e h | fuori --from-stdin
+
+# NUL-delimited (safe for arbitrary filenames)
+fd -e c --print0 | fuori --from-stdin -0
+git ls-files -z -- src/ | fuori --from-stdin -0
+```
+
+Semantics:
+
+- stdin-selected paths bypass selection-time ignore rules
+- they still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
+- `--from-stdin` is mutually exclusive with `--staged`, `--unstaged`, `--diff`, and `--no-git`
+- `-0` / `--null` requires `--from-stdin`
+- empty stdin is a successful no-op export that still emits the normal header
+- stdin input order is not preserved; paths are sorted and deduplicated before export
+- display paths are caller-supplied, so absolute stdin paths render as absolute headings and relative stdin paths render as relative headings
 
 ## Token Estimates
 

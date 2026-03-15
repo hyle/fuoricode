@@ -51,6 +51,16 @@ assert_no_temp_outputs() {
     fi
 }
 
+assert_occurrences() {
+    file=$1
+    pattern=$2
+    expected=$3
+    actual=$(grep -F -c -- "$pattern" "$file")
+    if [ "$actual" -ne "$expected" ]; then
+        fail "expected $expected occurrences of '$pattern' in $file, got $actual"
+    fi
+}
+
 TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/fuori-cli-test.XXXXXX")
 trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
@@ -202,6 +212,93 @@ assert_contains "$ODD_DIR/odd_stdout.txt" "## file with spaces\\.txt"
 assert_contains "$ODD_DIR/odd_stdout.txt" "## café\\.py"
 assert_contains "$ODD_DIR/odd_stdout.txt" "## weird &amp; &lt;name\\>\\.txt"
 
+STDIN_DIR="$TMPDIR/stdin_selection"
+mkdir -p "$STDIN_DIR/ignored"
+cat >"$STDIN_DIR/.gitignore" <<'EOF_STDIN_IGNORE'
+ignored/
+EOF_STDIN_IGNORE
+cat >"$STDIN_DIR/alpha.c" <<'EOF_STDIN_ALPHA'
+int alpha(void) { return 1; }
+EOF_STDIN_ALPHA
+cat >"$STDIN_DIR/beta.c" <<'EOF_STDIN_BETA'
+int beta(void) { return 2; }
+EOF_STDIN_BETA
+cat >"$STDIN_DIR/file with spaces.txt" <<'EOF_STDIN_SPACES'
+space path
+EOF_STDIN_SPACES
+cat >"$STDIN_DIR/ignored/keep.txt" <<'EOF_STDIN_IGNORED'
+ignored but selected
+EOF_STDIN_IGNORED
+
+printf 'beta.c\nalpha.c\nmissing.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_newline_stdout.txt 2>stdin_newline_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "This document contains files selected from caller-supplied stdin paths."
+assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "## alpha\\.c"
+assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "## beta\\.c"
+assert_not_contains "$STDIN_DIR/stdin_newline_stdout.txt" "missing\\.c"
+
+printf 'alpha.c\0beta.c\0' | (cd "$STDIN_DIR" && "$BIN" --from-stdin -0 --no-tree -o - >stdin_null_stdout.txt 2>stdin_null_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_null_stdout.txt" "## alpha\\.c"
+assert_contains "$STDIN_DIR/stdin_null_stdout.txt" "## beta\\.c"
+
+: | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_empty_stdout.txt 2>stdin_empty_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_empty_stdout.txt" "# Codebase Export"
+assert_contains "$STDIN_DIR/stdin_empty_stdout.txt" "This document contains files selected from caller-supplied stdin paths."
+assert_not_contains "$STDIN_DIR/stdin_empty_stdout.txt" "## "
+
+printf 'missing.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_none_stdout.txt 2>stdin_none_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_none_stdout.txt" "# Codebase Export"
+assert_not_contains "$STDIN_DIR/stdin_none_stdout.txt" "## "
+
+if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --staged >/dev/null 2>stdin_conflict_staged.txt); then
+    fail "expected --from-stdin --staged to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_conflict_staged.txt" "--from-stdin, --staged, --unstaged, and --diff are mutually exclusive"
+
+if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --diff HEAD >/dev/null 2>stdin_conflict_diff.txt); then
+    fail "expected --from-stdin --diff to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_conflict_diff.txt" "--from-stdin, --staged, --unstaged, and --diff are mutually exclusive"
+
+if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-git >/dev/null 2>stdin_conflict_no_git.txt); then
+    fail "expected --from-stdin --no-git to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_conflict_no_git.txt" "--no-git cannot be combined with --from-stdin, --staged, --unstaged, or --diff"
+
+if (cd "$STDIN_DIR" && "$BIN" -0 >/dev/null 2>stdin_null_without_mode_stderr.txt); then
+    fail "expected -0 without --from-stdin to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_null_without_mode_stderr.txt" "-0/--null requires --from-stdin"
+
+if (cd "$STDIN_DIR" && "$BIN" --null >/dev/null 2>stdin_long_null_without_mode_stderr.txt); then
+    fail "expected --null without --from-stdin to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_long_null_without_mode_stderr.txt" "-0/--null requires --from-stdin"
+
+printf 'alpha.c\nalpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_dupe_stdout.txt 2>stdin_dupe_stderr.txt)
+assert_occurrences "$STDIN_DIR/stdin_dupe_stdout.txt" "## alpha\\.c" 1
+
+printf 'alpha.c' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_unterminated_newline_stdout.txt 2>stdin_unterminated_newline_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_unterminated_newline_stdout.txt" "## alpha\\.c"
+
+printf 'alpha.c\0beta.c' | (cd "$STDIN_DIR" && "$BIN" --from-stdin -0 --no-tree -o - >stdin_unterminated_null_stdout.txt 2>stdin_unterminated_null_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_unterminated_null_stdout.txt" "## alpha\\.c"
+assert_contains "$STDIN_DIR/stdin_unterminated_null_stdout.txt" "## beta\\.c"
+
+printf 'file with spaces.txt\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_spaces_newline_stdout.txt 2>stdin_spaces_newline_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_spaces_newline_stdout.txt" "## file with spaces\\.txt"
+
+printf 'file with spaces.txt\0' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --null --no-tree -o - >stdin_spaces_null_stdout.txt 2>stdin_spaces_null_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_spaces_null_stdout.txt" "## file with spaces\\.txt"
+
+printf 'beta.c\nalpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_order_stdout.txt 2>stdin_order_stderr.txt)
+first_heading=$(grep '^## ' "$STDIN_DIR/stdin_order_stdout.txt" | head -n 1)
+if [ "$first_heading" != "## alpha\\.c" ]; then
+    fail "expected sorted stdin output, got first heading '$first_heading'"
+fi
+
+printf 'ignored/keep.txt\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_ignore_bypass_stdout.txt 2>stdin_ignore_bypass_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_ignore_bypass_stdout.txt" "## ignored/keep\\.txt"
+
 NEGATE_DIR="$TMPDIR/negated_restore"
 mkdir -p "$NEGATE_DIR/build"
 cat >"$NEGATE_DIR/.gitignore" <<'EOF_NEGATE_IGNORE'
@@ -250,6 +347,6 @@ assert_contains "$REPO/stdout_no_git.txt" "This document contains all the source
 if (cd "$REPO" && "$BIN" --no-git --staged >/dev/null 2>stderr_invalid.txt); then
     fail "expected --no-git --staged to fail"
 fi
-assert_contains "$REPO/stderr_invalid.txt" "--no-git cannot be combined with --staged, --unstaged, or --diff"
+assert_contains "$REPO/stderr_invalid.txt" "--no-git cannot be combined with --from-stdin, --staged, --unstaged, or --diff"
 
 printf 'cli tests passed\n'
