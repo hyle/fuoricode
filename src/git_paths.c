@@ -34,6 +34,7 @@ void free_selected_paths(SelectedPath* paths, size_t count) {
 }
 
 static int run_command_capture(const char* const argv[],
+                               int suppress_stderr,
                                unsigned char** output,
                                size_t* output_len,
                                int* exit_status,
@@ -78,6 +79,7 @@ static int run_command_capture(const char* const argv[],
 
     if (pid == 0) {
         int child_errno;
+        int null_fd = -1;
         close(stdout_pipe[0]);
         close(error_pipe[0]);
 
@@ -85,6 +87,19 @@ static int run_command_capture(const char* const argv[],
             child_errno = errno;
             write(error_pipe[1], &child_errno, sizeof(child_errno));
             _exit(127);
+        }
+
+        if (suppress_stderr) {
+            null_fd = open("/dev/null", O_WRONLY);
+            if (null_fd == -1 || dup2(null_fd, STDERR_FILENO) == -1) {
+                child_errno = errno;
+                write(error_pipe[1], &child_errno, sizeof(child_errno));
+                if (null_fd != -1) {
+                    close(null_fd);
+                }
+                _exit(127);
+            }
+            close(null_fd);
         }
 
         close(stdout_pipe[1]);
@@ -182,7 +197,7 @@ static int capture_git_line(const char* repo_root,
     if (probe_result) {
         *probe_result = GIT_PROBE_READY;
     }
-    if (run_command_capture(argv, &output, &output_len, &exit_status, &exec_errno) != 0) {
+    if (run_command_capture(argv, quiet_probe, &output, &output_len, &exit_status, &exec_errno) != 0) {
         perror("Error running git");
         return -1;
     }
@@ -411,7 +426,7 @@ int collect_git_paths(FileSelectionMode mode,
     }
     args[argc] = NULL;
 
-    if (run_command_capture(args, &output, &output_len, &exit_status, &exec_errno) != 0) {
+    if (run_command_capture(args, 0, &output, &output_len, &exit_status, &exec_errno) != 0) {
         perror("Error running git");
         goto cleanup;
     }

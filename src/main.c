@@ -19,8 +19,10 @@
 #endif
 
 static int format_size_with_commas(size_t value, char* buffer, size_t buffer_size) {
-    char reversed[64];
-    size_t digits = 0;
+    char digits_buf[64];
+    size_t digit_count = 0;
+    size_t comma_count = 0;
+    size_t total_len = 0;
     size_t used = 0;
 
     if (!buffer || buffer_size == 0) {
@@ -29,24 +31,26 @@ static int format_size_with_commas(size_t value, char* buffer, size_t buffer_siz
     }
 
     do {
-        if (digits >= sizeof(reversed) - 1) {
+        if (digit_count >= sizeof(digits_buf) - 1) {
             errno = EOVERFLOW;
             return -1;
         }
-        if (digits > 0 && digits % 3 == 0) {
-            reversed[digits++] = ',';
-        }
-        reversed[digits++] = (char)('0' + (value % 10));
+        digits_buf[digit_count++] = (char)('0' + (value % 10));
         value /= 10;
     } while (value > 0);
 
-    if (digits + 1 > buffer_size) {
+    comma_count = (digit_count > 0) ? (digit_count - 1) / 3 : 0;
+    total_len = digit_count + comma_count;
+    if (total_len + 1 > buffer_size) {
         errno = ENAMETOOLONG;
         return -1;
     }
 
-    while (digits > 0) {
-        buffer[used++] = reversed[--digits];
+    for (size_t i = digit_count; i > 0; i--) {
+        buffer[used++] = digits_buf[i - 1];
+        if (i > 1 && (i - 1) % 3 == 0) {
+            buffer[used++] = ',';
+        }
     }
     buffer[used] = '\0';
     return 0;

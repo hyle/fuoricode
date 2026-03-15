@@ -64,6 +64,7 @@ EOF_OUTSIDE
 assert_contains "$OUTSIDE/stdout.txt" "This document contains all the source code files from the current directory subtree using the local filesystem walker."
 assert_not_contains "$OUTSIDE/stderr.txt" "Git file-selection modes require"
 assert_not_contains "$OUTSIDE/stderr.txt" "git rev-parse failed"
+assert_not_contains "$OUTSIDE/stderr.txt" "fatal: not a git repository"
 
 cat >"$OUTSIDE/notes.md" <<'EOF_NOTES'
 notes
@@ -131,6 +132,13 @@ if (cd "$TOKEN_DIR" && "$BIN" --max-tokens 1 -o blocked.md >/dev/null 2>max_toke
 fi
 assert_contains "$TOKEN_DIR/max_tokens_existing_stderr.txt" "Error: estimated output is"
 assert_file_equals "$TOKEN_DIR/blocked.md" "original content"
+
+FORMAT_DIR="$TMPDIR/formatting"
+mkdir -p "$FORMAT_DIR"
+awk 'BEGIN { for (i = 0; i < 130000; i++) printf "x"; printf "\n" }' >"$FORMAT_DIR/big.txt"
+(cd "$FORMAT_DIR" && "$BIN" -s 200 -o - >format_stdout.txt 2>format_stderr.txt)
+assert_contains "$FORMAT_DIR/format_stderr.txt" "Bytes written:  130,"
+assert_not_contains "$FORMAT_DIR/format_stderr.txt" "Bytes written:  1,30,"
 
 FAIL_DIR="$TMPDIR/write_failure"
 mkdir -p "$FAIL_DIR/blocked"
