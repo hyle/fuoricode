@@ -55,6 +55,21 @@ Run `fuori` in any directory you want to export:
 
 By default, the application creates a file named `_export.md` in the current directory containing all source code files in markdown format. Inside a Git repository, it prefers Git's view of the current subtree (tracked files plus untracked non-ignored files); outside a repository, or when you pass `--no-git`, it falls back to the recursive filesystem walker.
 
+## Repository Layout
+
+The repository keeps project-level files at the root and uses a small-app layout for code:
+
+```text
+.
+├── .github/
+├── src/
+├── tests/
+├── CONTRIBUTING.md
+├── LICENSE
+├── Makefile
+└── README.md
+```
+
 ### Command Line Options
 
 ```bash
@@ -62,10 +77,11 @@ By default, the application creates a file named `_export.md` in the current dir
 ```
 
 **Options:**
+- `-h, --help`: Display help message
 - `-V, --version`: Show version information
 - `-v, --verbose`: Show progress information during processing
-- `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
 - `-o, --output <path>`: Set output path (use `-` for stdout)
+- `--no-clobber`: Fail if output file already exists
 - `--no-git`: Force recursive filesystem selection instead of the default auto-Git behavior
 - `--staged`: Export staged files from the current Git subtree
 - `--unstaged`: Export unstaged tracked files from the current Git subtree
@@ -73,10 +89,9 @@ By default, the application creates a file named `_export.md` in the current dir
 - `--tree`: Include the project tree section (default)
 - `--no-tree`: Omit the project tree section
 - `--tree-depth <n>` / `--tree-depth=<n>`: Limit tree rendering depth to `n` levels
+- `-s <size_kb>`: Set maximum file size limit in KB (default: 100)
 - `--warn-tokens <n>` / `--warn-tokens=<n>`: Warn if the estimated token count exceeds `n` (default: 200000)
 - `--max-tokens <n>` / `--max-tokens=<n>`: Fail before writing output if the estimated token count exceeds `n`
-- `--no-clobber`: Fail if output file already exists
-- `-h, --help`: Display help message
 
 Git file-selection modes are mutually exclusive: use at most one of `--staged`, `--unstaged`, or `--diff`. `--no-git` cannot be combined with those explicit Git selection flags.
 
@@ -84,6 +99,9 @@ Git file-selection modes are mutually exclusive: use at most one of `--staged`, 
 ```bash
 # Basic usage
 fuori
+
+# Show help
+fuori --help
 
 # Force filesystem recursion even inside a Git repository
 fuori --no-git
@@ -129,9 +147,6 @@ fuori --warn-tokens 100000
 
 # Refuse to write exports above a hard token budget
 fuori --max-tokens 180000
-
-# Show help
-fuori --help
 ```
 
 ## .gitignore File

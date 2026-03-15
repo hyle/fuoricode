@@ -1,9 +1,10 @@
 CC = gcc
 CPPFLAGS += -DVERSION=\"$(VERSION)\"
+CPPFLAGS += -Isrc
 CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wwrite-strings -Wredundant-decls \
          -Wstrict-prototypes -Wold-style-definition -std=c99 -O2 -D_POSIX_C_SOURCE=200809L
 TARGET = fuori
-SOURCES = main.c collect.c render.c git_paths.c ignore.c options.c tree.c
+SOURCES = src/main.c src/collect.c src/render.c src/git_paths.c src/ignore.c src/options.c src/tree.c
 TEST_TARGET = test_ignore
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -14,12 +15,12 @@ all: $(TARGET)
 $(TARGET): $(SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
-$(TEST_TARGET): test_ignore.c ignore.c ignore.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TEST_TARGET) test_ignore.c ignore.c
+$(TEST_TARGET): tests/test_ignore.c src/ignore.c src/ignore.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TEST_TARGET) tests/test_ignore.c src/ignore.c
 
 test: $(TARGET) $(TEST_TARGET)
 	./$(TEST_TARGET)
-	BIN=./$(TARGET) sh ./test_cli.sh
+	BIN=./$(TARGET) sh ./tests/test_cli.sh
 
 clean:
 	rm -f $(TARGET) $(TEST_TARGET)
