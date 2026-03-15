@@ -14,6 +14,19 @@ Design bias:
 - minimal dependencies and simple build flow
 - practical behavior for real repositories over perfect abstraction purity
 
+## Design Strengths
+
+These implementation choices are worth preserving because they match the tool's scope well:
+
+- Git integration is pragmatic: `fuori` relies on the system `git` binary instead of a heavier embedded Git library, while still falling back to the filesystem walker outside repositories.
+- Subprocess handling is defensive: Git commands use careful fork/exec handling so `execvp` failures can be reported reliably rather than inferred indirectly.
+- Content filtering is intentionally strict: the collector is biased toward exporting UTF-8-like source text and skipping inputs that are likely to pollute LLM context.
+- Token estimation is artifact-based: warnings and hard limits are derived from the final rendered Markdown structure rather than just raw source bytes.
+- Output handling is atomic: token-limit refusal happens before destination mutation, file output uses `mkstemp` plus `rename`, and temp/final output files are excluded from collection via inode/device checks.
+- Git-backed and filesystem-backed selection stay cleanly separated: auto mode prefers Git and falls back quietly, while explicit Git modes remain hard Git-dependent and preserve subtree scoping.
+- Rendering and metrics are kept consistent: fence sizing is precomputed once, metrics are based on the actual rendered structure, and tree bytes are counted separately but within the same accounting model.
+- Hardening remains pragmatic rather than elaborate: `O_NOFOLLOW` is used when available, opened files are verified by device/inode, Git-selected paths are deduplicated, and output ordering is deterministic.
+
 ## File Selection Model
 
 `fuori` distinguishes between requested selection mode and resolved selection mode.
