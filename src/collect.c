@@ -642,11 +642,15 @@ static int collect_recursive_paths(const char* base_path,
                                                       1,
                                                       ancestor_ignored);
             if (dir_is_ignored) {
-                ctx->skipped_ignored++;
-                if (ctx->verbose) {
-                    fprintf(stderr, "Skipping ignored directory: %s\n", path);
+                if (!ignored_directory_may_have_included_descendants(path,
+                                                                     ctx->ignore_patterns,
+                                                                     ctx->ignore_count)) {
+                    ctx->skipped_ignored++;
+                    if (ctx->verbose) {
+                        fprintf(stderr, "Skipping ignored directory: %s\n", path);
+                    }
+                    continue;
                 }
-                continue;
             }
             if (collect_recursive_paths(path, ctx, dir_is_ignored, plan) != 0) {
                 status = -1;

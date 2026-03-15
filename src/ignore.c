@@ -169,6 +169,51 @@ static int match_segment_lists(char* const* pattern_items,
     return path_index == path_segments->count;
 }
 
+static int pattern_can_match_at_or_below_path(char* const* pattern_items,
+                                              size_t pattern_count,
+                                              size_t pattern_index,
+                                              const PathSegments* path_segments,
+                                              size_t path_index) {
+    while (pattern_index < pattern_count) {
+        const char* pattern = pattern_items[pattern_index];
+
+        if (is_double_star_segment(pattern)) {
+            while (pattern_index + 1 < pattern_count &&
+                   is_double_star_segment(pattern_items[pattern_index + 1])) {
+                pattern_index++;
+            }
+
+            if (pattern_index + 1 == pattern_count) {
+                return 1;
+            }
+
+            for (size_t i = path_index; i <= path_segments->count; i++) {
+                if (pattern_can_match_at_or_below_path(pattern_items,
+                                                       pattern_count,
+                                                       pattern_index + 1,
+                                                       path_segments,
+                                                       i)) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        if (path_index >= path_segments->count) {
+            return 1;
+        }
+
+        if (fnmatch(pattern, path_segments->items[path_index], 0) != 0) {
+            return 0;
+        }
+
+        pattern_index++;
+        path_index++;
+    }
+
+    return path_index == path_segments->count;
+}
+
 static int compile_ignore_pattern(const char* raw_pattern, IgnorePattern* pattern) {
     const char* source = raw_pattern;
     size_t length;
@@ -275,6 +320,52 @@ int resolve_ignore_state(const char* filepath,
 
 int is_ignored(const char* filepath, const IgnorePattern* patterns, size_t count, int is_dir) {
     return resolve_ignore_state(filepath, patterns, count, is_dir, 0);
+}
+
+int ignored_directory_may_have_included_descendants(const char* dirpath,
+                                                    const IgnorePattern* patterns,
+                                                    size_t count) {
+    PathSegments dir_segments = {0};
+    int dir_segments_ready = 0;
+    const char* rel;
+
+    if (!dirpath || !patterns) {
+        errno = EINVAL;
+        return 0;
+    }
+
+    rel = (strncmp(dirpath, "./", 2) == 0) ? dirpath + 2 : dirpath;
+
+    for (size_t i = 0; i < count; i++) {
+        const IgnorePattern* pattern = &patterns[i];
+
+        if (!pattern->negated) {
+            continue;
+        }
+
+        if (!pattern->use_path_match) {
+            return 1;
+        }
+
+        if (!dir_segments_ready) {
+            if (split_path_segments(rel, &dir_segments) != 0) {
+                return 1;
+            }
+            dir_segments_ready = 1;
+        }
+
+        if (pattern_can_match_at_or_below_path(pattern->segment_items,
+                                               pattern->segment_count,
+                                               0,
+                                               &dir_segments,
+                                               0)) {
+            free_path_segments(&dir_segments);
+            return 1;
+        }
+    }
+
+    free_path_segments(&dir_segments);
+    return 0;
 }
 
 int load_ignore_patterns(const char* ignore_file, IgnorePattern** patterns, size_t* count) {
