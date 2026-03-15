@@ -35,12 +35,15 @@ These implementation choices are worth preserving because they match the tool's 
 - Inside a Git repository, auto mode prefers Git's view of the current subtree.
 - Outside Git, or when Git is unavailable, auto mode falls back silently to the recursive filesystem walker.
 - `--no-git` forces the filesystem walker.
+- `--from-stdin` accepts caller-supplied paths from standard input and resolves directly to selected-path mode.
 - Explicit Git modes such as `--staged`, `--unstaged`, and `--diff` remain hard Git-dependent modes.
+- `-0` / `--null` switches stdin record parsing from newline to NUL for safe round-tripping of arbitrary filenames.
 
 Why:
 
 - Git-backed default mode gives correct repository-aware behavior for most real projects.
 - Filesystem fallback preserves portability for unpacked archives, non-Git directories, and simple local use.
+- Stdin mode is the Unix escape hatch for external path producers without introducing another export pipeline.
 
 ## Ignore Behavior
 
@@ -48,6 +51,7 @@ There are two ignore paths by design:
 
 - Git-backed selection uses Git as the source of truth for tracked files and untracked non-ignored files.
 - Filesystem recursion uses the local ignore engine in `src/ignore.c`.
+- Stdin-backed selection bypasses selection-time ignore matching, just like Git-selected paths.
 
 The local ignore engine exists to support:
 
@@ -56,6 +60,21 @@ The local ignore engine exists to support:
 - automatic fallback outside repositories
 
 It supports common `.gitignore`-style matching, including recursive `**` globs, but it is not intended to reimplement Git's full layered ignore model.
+
+For stdin-selected paths, the caller chooses the candidate set and the normal export-time gate still applies afterward: regular-file validation, symlink skipping, UTF-8/binary filtering, size limits, output self-exclusion, and deterministic final ordering.
+
+## Stdin Selection Semantics
+
+Stdin selection is intentionally narrow:
+
+- `--from-stdin` only changes where paths come from.
+- Newline is the default record delimiter for convenience.
+- `-0` / `--null` switches parsing to NUL and is the safe choice for arbitrary path bytes.
+- Empty records are ignored.
+- EOF without a final delimiter still yields a valid final record.
+- Stdin-selected paths are sorted and deduplicated before export rather than emitted in pipe order.
+
+This preserves the project's determinism contract: output order is a property of the selected content, not the caller's input order.
 
 ## In-Memory Export Plan
 

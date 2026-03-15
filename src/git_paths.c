@@ -33,6 +33,41 @@ void free_selected_paths(SelectedPath* paths, size_t count) {
     free(paths);
 }
 
+static int normalize_selected_paths(SelectedPath* paths, size_t* count) {
+    if (!count) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!paths || *count == 0) {
+        return 0;
+    }
+
+    if (*count > 1) {
+        qsort(paths, *count, sizeof(*paths), compare_selected_paths);
+        size_t unique_count = 1;
+        for (size_t i = 1; i < *count; i++) {
+            if (strcmp(paths[i - 1].open_path, paths[i].open_path) == 0 &&
+                strcmp(paths[i - 1].display_path, paths[i].display_path) == 0) {
+                free(paths[i].open_path);
+                free(paths[i].display_path);
+                paths[i].open_path = NULL;
+                paths[i].display_path = NULL;
+                continue;
+            }
+            if (unique_count != i) {
+                paths[unique_count] = paths[i];
+                paths[i].open_path = NULL;
+                paths[i].display_path = NULL;
+            }
+            unique_count++;
+        }
+        *count = unique_count;
+    }
+
+    return 0;
+}
+
 static int run_command_capture(const char* const argv[],
                                int suppress_stderr,
                                unsigned char** output,
@@ -290,6 +325,41 @@ static int append_selected_path(SelectedPath** paths,
     return 0;
 }
 
+static int append_literal_selected_path(SelectedPath** paths,
+                                        size_t* count,
+                                        size_t* capacity,
+                                        const char* path,
+                                        size_t path_len) {
+    if (*count == *capacity) {
+        size_t new_capacity = (*capacity == 0) ? 16 : *capacity * 2;
+        SelectedPath* new_paths = realloc(*paths, new_capacity * sizeof(**paths));
+        if (!new_paths) {
+            return -1;
+        }
+        *paths = new_paths;
+        *capacity = new_capacity;
+    }
+
+    (*paths)[*count].open_path = malloc(path_len + 1);
+    if (!(*paths)[*count].open_path) {
+        return -1;
+    }
+    memcpy((*paths)[*count].open_path, path, path_len);
+    (*paths)[*count].open_path[path_len] = '\0';
+
+    (*paths)[*count].display_path = malloc(path_len + 1);
+    if (!(*paths)[*count].display_path) {
+        free((*paths)[*count].open_path);
+        (*paths)[*count].open_path = NULL;
+        return -1;
+    }
+    memcpy((*paths)[*count].display_path, path, path_len);
+    (*paths)[*count].display_path[path_len] = '\0';
+
+    (*count)++;
+    return 0;
+}
+
 static int parse_selected_paths_output(const unsigned char* output,
                                        size_t output_len,
                                        const char* repo_root,
@@ -327,26 +397,68 @@ static int parse_selected_paths_output(const unsigned char* output,
         start = end + 1;
     }
 
-    if (count > 1) {
-        qsort(paths, count, sizeof(*paths), compare_selected_paths);
-        size_t unique_count = 1;
-        for (size_t i = 1; i < count; i++) {
-            if (strcmp(paths[i - 1].open_path, paths[i].open_path) == 0 &&
-                strcmp(paths[i - 1].display_path, paths[i].display_path) == 0) {
-                free(paths[i].open_path);
-                free(paths[i].display_path);
-                paths[i].open_path = NULL;
-                paths[i].display_path = NULL;
-                continue;
+    if (normalize_selected_paths(paths, &count) != 0) {
+        free_selected_paths(paths, count);
+        return -1;
+    }
+
+    *paths_out = paths;
+    *count_out = count;
+    return 0;
+}
+
+int collect_stdin_paths(int null_delim,
+                        SelectedPath** paths_out,
+                        size_t* count_out) {
+    SelectedPath* paths = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+    char* line = NULL;
+    size_t line_cap = 0;
+    int delim = null_delim ? '\0' : '\n';
+
+    if (!paths_out || !count_out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *paths_out = NULL;
+    *count_out = 0;
+
+    while (1) {
+        ssize_t line_len = getdelim(&line, &line_cap, delim, stdin);
+        if (line_len == -1) {
+            if (feof(stdin)) {
+                break;
             }
-            if (unique_count != i) {
-                paths[unique_count] = paths[i];
-                paths[i].open_path = NULL;
-                paths[i].display_path = NULL;
-            }
-            unique_count++;
+            free(line);
+            free_selected_paths(paths, count);
+            return -1;
         }
-        count = unique_count;
+
+        size_t record_len = (size_t)line_len;
+        if (record_len > 0 && line[record_len - 1] == delim) {
+            record_len--;
+        }
+        if (!null_delim && record_len > 0 && line[record_len - 1] == '\r') {
+            record_len--;
+        }
+        if (record_len == 0) {
+            continue;
+        }
+
+        if (append_literal_selected_path(&paths, &count, &capacity, line, record_len) != 0) {
+            free(line);
+            free_selected_paths(paths, count);
+            return -1;
+        }
+    }
+
+    free(line);
+
+    if (normalize_selected_paths(paths, &count) != 0) {
+        free_selected_paths(paths, count);
+        return -1;
     }
 
     *paths_out = paths;

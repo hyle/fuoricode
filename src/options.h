@@ -10,6 +10,7 @@ typedef struct {
     int verbose;
     int no_clobber;
     int output_is_stdout;
+    int stdin_null_delim;
     int show_tree;
     size_t max_file_size;
     size_t tree_depth;

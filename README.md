@@ -25,6 +25,7 @@ Turns your messy working tree into clean, auditable context. Zero copy-paste, ze
 - LLM context packing: export a codebase into one Markdown artifact, ready for any AI assistant
 - Auto-detects Git worktrees by default and falls back to recursive filesystem scanning elsewhere
 - Git-aware file selection via the default worktree mode, `--staged`, `--unstaged`, or `--diff <range>`
+- Caller-supplied file selection via `--from-stdin`, with optional NUL-delimited parsing via `-0` / `--null`
 - Respects `.gitignore` rules in Git-backed modes and local ignore rules in filesystem mode
 - Includes a project tree that matches the exported artifact
 - Binary file auto-detection and exclusion
@@ -90,6 +91,7 @@ fuori [OPTIONS]
 | `-o`, `--output <path>` | Output path (`-` for stdout)                |
 | `--no-clobber`          | Fail if output already exists               |
 | `--no-git`              | Force filesystem selection                  |
+| `--from-stdin`          | Read paths from stdin instead of Git        |
 | `--staged`              | Export staged files                         |
 | `--unstaged`            | Export unstaged tracked files               |
 | `--diff <range>`        | Export files changed in a diff range        |
@@ -99,7 +101,7 @@ fuori [OPTIONS]
 | `--warn-tokens <n>`     | Warn above token threshold (default: 200k)  |
 | `--max-tokens <n>`      | Hard-fail above token threshold             |
 
-Git selection flags (`--staged`, `--unstaged`, `--diff`) are mutually exclusive, and `--no-git` cannot be combined with them.
+Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 
 **Examples:**
 ```bash
@@ -161,6 +163,29 @@ Additional semantics:
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
 - If Git selects no files, `fuori` still succeeds and writes only the normal export header
+
+## Stdin File Selection
+
+Use `--from-stdin` when another tool should decide which paths to export.
+
+```bash
+# newline-delimited (default)
+fd -e c -e h | fuori --from-stdin
+
+# NUL-delimited (safe for arbitrary filenames)
+fd -e c --print0 | fuori --from-stdin -0
+git ls-files -z -- src/ | fuori --from-stdin -0
+```
+
+Semantics:
+
+- stdin-selected paths bypass selection-time ignore rules
+- they still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
+- `--from-stdin` is mutually exclusive with `--staged`, `--unstaged`, `--diff`, and `--no-git`
+- `-0` / `--null` requires `--from-stdin`
+- empty stdin is a successful no-op export that still emits the normal header
+- stdin input order is not preserved; paths are sorted and deduplicated before export
+- display paths are caller-supplied, so absolute stdin paths render as absolute headings and relative stdin paths render as relative headings
 
 ## Token Estimates
 

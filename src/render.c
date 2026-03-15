@@ -54,6 +54,8 @@ static const char* export_description(FileSelectionMode mode) {
             return "This document contains unstaged tracked files selected from the current Git subtree.\n\n";
         case FILE_SELECTION_GIT_DIFF:
             return "This document contains files selected from the current Git subtree by the requested Git diff range.\n\n";
+        case FILE_SELECTION_STDIN:
+            return "This document contains files selected from caller-supplied stdin paths.\n\n";
         case FILE_SELECTION_RECURSIVE:
             return "This document contains all the source code files from the current directory subtree using the local filesystem walker.\n\n";
         case FILE_SELECTION_AUTO:

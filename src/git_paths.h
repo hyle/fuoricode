@@ -21,6 +21,9 @@ int collect_git_paths(FileSelectionMode mode,
                       SelectedPath** paths_out,
                       size_t* count_out,
                       GitPathResult* result_out);
+int collect_stdin_paths(int null_delim,
+                        SelectedPath** paths_out,
+                        size_t* count_out);
 void free_selected_paths(SelectedPath* paths, size_t count);
 
 #endif

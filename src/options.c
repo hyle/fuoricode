@@ -31,6 +31,11 @@ static int parse_positive_size_value(const char* value,
     return 0;
 }
 
+static void print_selection_mode_conflict(void) {
+    fprintf(stderr, "--from-stdin, --staged, --unstaged, and --diff are mutually exclusive\n");
+    fprintf(stderr, "Use -h or --help for usage information\n");
+}
+
 void init_cli_options(CliOptions* options) {
     if (!options) {
         return;
@@ -57,10 +62,12 @@ void print_usage(const char* argv0) {
     printf("  -o, --output        Set output path (use '-' for stdout)\n");
     printf("      --no-clobber    Fail if output file already exists\n");
     printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
+    printf("      --from-stdin    Read paths from stdin instead of using Git or filesystem selection\n");
     printf("      --staged        Export staged files from the current Git subtree\n");
     printf("      --unstaged      Export unstaged tracked files from the current Git subtree\n");
     printf("      --diff <r>      Export files changed by a git diff range (for example main...HEAD)\n");
-    printf("                      Git file-selection flags are mutually exclusive\n");
+    printf("                      --from-stdin, --staged, --unstaged, and --diff are mutually exclusive\n");
+    printf("  -0, --null          Use NUL as the input record delimiter instead of newline (requires --from-stdin)\n");
     printf("      --tree          Include a directory tree section (default)\n");
     printf("      --no-tree       Omit the directory tree section\n");
     printf("      --tree-depth    Limit tree rendering depth to N levels\n");
@@ -120,6 +127,14 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->output_is_stdout = (strcmp(options->output_path, "-") == 0);
         } else if (strcmp(argv[i], "--no-git") == 0) {
             force_no_git = 1;
+        } else if (strcmp(argv[i], "--from-stdin") == 0) {
+            if (options->requested_mode != FILE_SELECTION_AUTO) {
+                print_selection_mode_conflict();
+                return -1;
+            }
+            options->requested_mode = FILE_SELECTION_STDIN;
+        } else if (strcmp(argv[i], "-0") == 0 || strcmp(argv[i], "--null") == 0) {
+            options->stdin_null_delim = 1;
         } else if (strcmp(argv[i], "--no-clobber") == 0) {
             options->no_clobber = 1;
         } else if (strcmp(argv[i], "--tree") == 0) {
@@ -170,22 +185,19 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             }
         } else if (strcmp(argv[i], "--staged") == 0) {
             if (options->requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
+                print_selection_mode_conflict();
                 return -1;
             }
             options->requested_mode = FILE_SELECTION_GIT_STAGED;
         } else if (strcmp(argv[i], "--unstaged") == 0) {
             if (options->requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
+                print_selection_mode_conflict();
                 return -1;
             }
             options->requested_mode = FILE_SELECTION_GIT_UNSTAGED;
         } else if (strcmp(argv[i], "--diff") == 0) {
             if (options->requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
+                print_selection_mode_conflict();
                 return -1;
             }
             if (i + 1 >= argc) {
@@ -201,8 +213,7 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->requested_mode = FILE_SELECTION_GIT_DIFF;
         } else if (strncmp(argv[i], "--diff=", 7) == 0) {
             if (options->requested_mode != FILE_SELECTION_AUTO) {
-                fprintf(stderr, "File-selection flags are mutually exclusive\n");
-                fprintf(stderr, "Use -h or --help for usage information\n");
+                print_selection_mode_conflict();
                 return -1;
             }
             options->diff_range = argv[i] + 7;
@@ -222,7 +233,13 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
     }
 
     if (force_no_git && options->requested_mode != FILE_SELECTION_AUTO) {
-        fprintf(stderr, "--no-git cannot be combined with --staged, --unstaged, or --diff\n");
+        fprintf(stderr, "--no-git cannot be combined with --from-stdin, --staged, --unstaged, or --diff\n");
+        fprintf(stderr, "Use -h or --help for usage information\n");
+        return -1;
+    }
+
+    if (options->stdin_null_delim && options->requested_mode != FILE_SELECTION_STDIN) {
+        fprintf(stderr, "-0/--null requires --from-stdin\n");
         fprintf(stderr, "Use -h or --help for usage information\n");
         return -1;
     }
@@ -264,6 +281,12 @@ int resolve_cli_selection(CliOptions* options,
     options->resolved_mode = options->requested_mode;
     if (options->resolved_mode == FILE_SELECTION_RECURSIVE) {
         return 0;
+    }
+
+    if (options->resolved_mode == FILE_SELECTION_STDIN) {
+        return collect_stdin_paths(options->stdin_null_delim,
+                                   selected_paths_out,
+                                   selected_count_out);
     }
 
     return collect_git_paths(options->resolved_mode,
