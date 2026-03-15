@@ -84,23 +84,23 @@ fuori [OPTIONS]
 
 **Options:**
 
-| Flag                    | Description                                 |
-| ----------------------- | ------------------------------------------- |
-| `-h`, `--help`          | Display help                                |
-| `-V`, `--version`       | Show version                                |
-| `-v`, `--verbose`       | Show progress during export                 |
-| `-o`, `--output <path>` | Output path (`-` for stdout)                |
-| `--no-clobber`          | Fail if output already exists               |
-| `--no-git`              | Force filesystem selection                  |
-| `--from-stdin`          | Read paths from stdin instead of Git        |
-| `--staged`              | Export staged files                         |
-| `--unstaged`            | Export unstaged tracked files               |
-| `--diff <range>`        | Export files changed in a diff range        |
-| `--tree` / `--no-tree`  | Include/omit the project tree (default: on) |
-| `--tree-depth <n>`      | Limit tree render depth                     |
-| `-s <size_kb>`          | Max file size in KB (default: 100)          |
-| `--warn-tokens <n>`     | Warn above token threshold (default: 200k)  |
-| `--max-tokens <n>`      | Hard-fail above token threshold             |
+| Flag | Description |
+|---|---|
+| `-h`, `--help` | Display help |
+| `-V`, `--version` | Show version |
+| `-v`, `--verbose` | Show progress during export |
+| `-o`, `--output <path>` | Output path (`-` for stdout) |
+| `--no-clobber` | Fail if output already exists |
+| `--no-git` | Force filesystem selection |
+| `--from-stdin` | Read paths from stdin |
+| `--staged` | Export staged files |
+| `--unstaged` | Export unstaged tracked files |
+| `--diff <range>` | Export files changed in a diff range |
+| `--tree` / `--no-tree` | Include/omit project tree (default: on) |
+| `--tree-depth <n>` | Limit tree render depth |
+| `-s <size_kb>` | Max file size in KB (default: 100) |
+| `--warn-tokens <n>` | Warn above token threshold (default: 200k) |
+| `--max-tokens <n>` | Hard-fail above token threshold |
 
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 
@@ -119,29 +119,30 @@ fuori --max-tokens 180000          # Hard token budget
 fuori -o out.md --no-clobber       # Refuse to overwrite
 ```
 
-## .gitignore File
+## Ignore Rules
 
-You can create a `.gitignore` file in the directory to specify files and patterns to exclude from the export.
-These rules apply to the recursive filesystem walker, including `--no-git` mode and automatic fallback outside Git repositories.
-This tool supports common gitignore-style rules, including comments, `!` negation, trailing `/` for directories,
-root-anchored `/` patterns, and recursive `**` path globs such as `**/node_modules/` and `**/*.pyc`.
-In filesystem mode, `fuori` also seeds a small built-in default ignore list even when no `.gitignore` is present:
-`.git/`, `node_modules/`, `build/`, `dist/`, `bin/`, `.venv/`, `__pycache__/`, `.env`, `.DS_Store`,
-and common compiled/log artifacts such as `*.o`, `*.a`, `*.so`, `*.exe`, `*.dll`, and `*.log`.
-If you need those paths exported, use stdin selection or move the files outside those default patterns.
+Place a `.gitignore` file in the working directory to exclude files and patterns from the export.
+These rules apply in `--no-git` mode and during automatic fallback outside Git repositories.
 
-```
-# Ignore build directories
-build/
-dist/
+Supported syntax:
 
-# Ignore specific file types
-*.log
-*.tmp
+- Comments (`#`)
+- Negation (`!pattern`)
+- Directory trailing slash (`dir/`)
+- Root-anchored patterns (`/pattern`)
+- Recursive globs (`**/node_modules/`, `**/*.pyc`)
 
-# Ignore node_modules directory
-node_modules/
-```
+In filesystem mode, `fuori` also applies a built-in default ignore list when no `.gitignore` is present:
+
+| Category | Patterns |
+|---|---|
+| VCS | `.git/` |
+| Dependencies | `node_modules/`, `.venv/`, `__pycache__/` |
+| Build output | `build/`, `dist/`, `bin/` |
+| Compiled artifacts | `*.o`, `*.a`, `*.so`, `*.exe`, `*.dll` |
+| Environment / OS | `.env`, `.DS_Store`, `*.log` |
+
+To export paths that match the default list, use `--from-stdin`.
 
 ## File Size Limit
 
@@ -149,25 +150,25 @@ Files larger than the specified size limit (default 100KB) are automatically exc
 
 ## Git File Selection
 
-When you run `fuori` without file-selection flags inside a Git repository, it asks Git for the current subtree's tracked files plus untracked non-ignored files by running `git ls-files -z --cached --others --exclude-standard`. If Git is unavailable or the current directory is not inside a repository, `fuori` silently falls back to the recursive filesystem walker.
+By default, `fuori` asks Git for tracked files plus untracked non-ignored files in the current subtree.
+If Git is unavailable or the directory is not a repository, it silently falls back to the filesystem walker.
+Use `--no-git` to force the filesystem walker explicitly.
 
-Use `--no-git` to force the recursive filesystem walker even inside a Git repository.
-
-When you use `--staged`, `--unstaged`, or `--diff`, `fuori` asks Git for an explicit file list instead of recursively walking the tree.
-
-- Default mode uses tracked files plus untracked non-ignored files (`git ls-files -z --cached --others --exclude-standard`)
-- `--staged` uses staged files in `AMR` (`git diff --cached --name-only --diff-filter=AMR`)
-- `--unstaged` uses tracked unstaged files in `AMR` (`git diff --name-only --diff-filter=AMR`)
-- `--diff <range>` passes `<range>` directly to `git diff`, so both two-dot and three-dot ranges work, including examples like `HEAD~3..HEAD`, `main...HEAD`, and `v1.2.0..HEAD`
+| Mode | Git command |
+|---|---|
+| Default | `git ls-files -z --cached --others --exclude-standard` |
+| `--staged` | `git diff --cached --name-only --diff-filter=AMR` |
+| `--unstaged` | `git diff --name-only --diff-filter=AMR` |
+| `--diff <range>` | `git diff --name-only <range>` (two-dot and three-dot ranges both work) |
 
 Additional semantics:
 
 - The default Git-backed mode and explicit Git file-selection modes are scoped to the current working directory subtree when run from a Git subdirectory
-- Git-selected files bypass selection-time ignore rules such as `.gitignore`
+- Git-selected files bypass bypass ignore rules at selection time
 - Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
-- If Git selects no files, `fuori` still succeeds and writes only the normal export header
+- If Git selects no files, `fuori` still succeeds and writes an empty export
 
 ## Stdin File Selection
 
@@ -185,10 +186,10 @@ git ls-files -z -- src/ | fuori --from-stdin -0
 Semantics:
 
 - stdin-selected paths bypass selection-time ignore rules
-- they still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
+- they still go through export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
 - `--from-stdin` is mutually exclusive with `--staged`, `--unstaged`, `--diff`, and `--no-git`
 - `-0` / `--null` requires `--from-stdin`
-- empty stdin is a successful no-op export that still emits the normal header
+- empty stdin is a successful no-op export that still emits the export preamble
 - stdin input order is not preserved; paths are sorted and deduplicated before export
 - display paths are caller-supplied, so absolute stdin paths render as absolute headings and relative stdin paths render as relative headings
 
