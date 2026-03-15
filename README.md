@@ -220,12 +220,13 @@ Warning: output may exceed 200,000 token context window. Consider using --staged
 
 Use `--warn-tokens <n>` to change the warning threshold, or `--max-tokens <n>` to fail before writing any output when the estimated size would exceed a hard limit.
 
-## Binary File Detection
+## Text File Detection
 
-The application automatically detects binary files by analyzing their content and excludes them from the export.
+`fuori` exports UTF-8 text files and skips inputs that do not pass its text/binary detection path.
+In practice, that means files with NUL bytes, invalid UTF-8, or too many control characters are excluded from the export.
 Empty files are skipped.
 Symbolic links are skipped to avoid recursion cycles.
-UTF-16 encoded files are currently treated as non-exportable and skipped by this detection path.
+UTF-16 and other non-UTF-8 text encodings are currently treated as non-exportable and skipped.
 
 ## Output Format
 

@@ -32,6 +32,10 @@ typedef struct {
     struct stat final_stat;
     int have_temp;
     int have_final;
+    size_t skipped_binary;
+    size_t skipped_too_large;
+    size_t skipped_ignored;
+    size_t skipped_symlink;
 } AppContext;
 
 typedef enum {

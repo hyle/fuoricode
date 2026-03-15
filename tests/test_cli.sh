@@ -65,11 +65,35 @@ assert_contains "$OUTSIDE/export.md" "## main\\.c"
 assert_contains "$OUTSIDE/export.md" "## notes\\.md"
 assert_not_contains "$OUTSIDE/export.md" "export.md"
 assert_not_contains "$OUTSIDE/export.md" ".fuori.tmp."
+assert_file_equals "$OUTSIDE/command_stdout.txt" ""
+assert_not_contains "$OUTSIDE/command_stderr.txt" "Codebase exported to export.md successfully!"
 
 (cd "$OUTSIDE" && "$BIN" -o - >redirected.md 2>redirect_stderr.txt)
 assert_contains "$OUTSIDE/redirected.md" "## main\\.c"
 assert_contains "$OUTSIDE/redirected.md" "## notes\\.md"
 assert_not_contains "$OUTSIDE/redirected.md" "redirected.md"
+
+VERBOSE_DIR="$TMPDIR/verbose"
+mkdir -p "$VERBOSE_DIR"
+cat >"$VERBOSE_DIR/.gitignore" <<'EOF_VERBOSE_IGNORE'
+ignored.txt
+EOF_VERBOSE_IGNORE
+cat >"$VERBOSE_DIR/main.c" <<'EOF_VERBOSE_MAIN'
+int main(void) { return 0; }
+EOF_VERBOSE_MAIN
+cat >"$VERBOSE_DIR/ignored.txt" <<'EOF_VERBOSE_IGNORED'
+ignored
+EOF_VERBOSE_IGNORED
+printf '\000\001\002binary' >"$VERBOSE_DIR/binary.bin"
+awk 'BEGIN { for (i = 0; i < 2048; i++) printf "x"; printf "\n" }' >"$VERBOSE_DIR/large.txt"
+ln -s main.c "$VERBOSE_DIR/link.c"
+
+(cd "$VERBOSE_DIR" && "$BIN" -v -s 1 -o - >verbose_stdout.txt 2>verbose_stderr.txt)
+assert_contains "$VERBOSE_DIR/verbose_stderr.txt" "Skipped: binary/empty=1, too_large=1, ignored=1, symlink=1"
+
+(cd "$OUTSIDE" && "$BIN" -v -o verbose_export.md >verbose_file_stdout.txt 2>verbose_file_stderr.txt)
+assert_file_equals "$OUTSIDE/verbose_file_stdout.txt" ""
+assert_contains "$OUTSIDE/verbose_file_stderr.txt" "Codebase exported to verbose_export.md successfully!"
 
 cat >"$OUTSIDE/existing.txt" <<'EOF_EXISTING'
 keep me
