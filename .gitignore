@@ -1,8 +1,10 @@
-/fuori
-/test_ignore
-/_export.md
+fuori
+test_tree
+test_ignore
 
 # macOS
 .DS_Store
 
 /scripts
+
+_export.md
