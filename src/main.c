@@ -177,6 +177,7 @@ int main(int argc, char* argv[]) {
     size_t selected_count = 0;
     ExportPlan plan = {0};
     RenderPlanInfo render_info = {0};
+    ExportRenderContext render_ctx = {0};
     ExportMetrics metrics = {0};
     int status = 1;
     int temp_created = 0;
@@ -264,17 +265,16 @@ int main(int argc, char* argv[]) {
         goto cleanup;
     }
 
-    if (calculate_export_metrics(&plan,
-                                 &render_info,
-                                 options.resolved_mode,
-                                 repository_name,
-                                 generated_at,
-                                 selected_paths,
-                                 selected_count,
-                                 options.diff_range,
-                                 ctx.show_tree,
-                                 ctx.tree_depth,
-                                 &metrics) != 0) {
+    render_ctx.mode = options.resolved_mode;
+    render_ctx.repository = repository_name;
+    render_ctx.generated_at = generated_at;
+    render_ctx.selected_paths = selected_paths;
+    render_ctx.selected_count = selected_count;
+    render_ctx.diff_range = options.diff_range;
+    render_ctx.show_tree = ctx.show_tree;
+    render_ctx.tree_depth = ctx.tree_depth;
+
+    if (calculate_export_metrics(&plan, &render_info, &render_ctx, &metrics) != 0) {
         perror("Error calculating export metrics");
         goto cleanup;
     }
@@ -346,25 +346,18 @@ int main(int argc, char* argv[]) {
         ctx.have_temp = 1;
     }
 
-    if (write_export_header(output_file,
-                            options.resolved_mode,
-                            repository_name,
-                            generated_at) != 0) {
+    if (write_export_header(output_file, &render_ctx) != 0) {
         perror("Error writing output header");
         goto cleanup;
     }
 
-    if (write_change_context(output_file,
-                             options.resolved_mode,
-                             selected_paths,
-                             selected_count,
-                             options.diff_range) != 0) {
+    if (write_change_context(output_file, &render_ctx) != 0) {
         perror("Error writing change context");
         goto cleanup;
     }
 
-    if (ctx.show_tree) {
-        if (write_project_tree(output_file, &plan, ctx.tree_depth) != 0) {
+    if (render_ctx.show_tree) {
+        if (write_project_tree(output_file, &plan, render_ctx.tree_depth) != 0) {
             perror("Error writing project tree");
             goto cleanup;
         }

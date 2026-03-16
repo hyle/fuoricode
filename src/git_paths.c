@@ -15,6 +15,13 @@ typedef enum {
     GIT_PROBE_FALLBACK
 } GitProbeResult;
 
+#define GIT_SELECTION_ARGS_MAX 13
+
+typedef struct {
+    char* repo_root;
+    char* prefix;
+} GitRepoPaths;
+
 static int compare_selected_paths(const void* lhs, const void* rhs) {
     const SelectedPath* left = lhs;
     const SelectedPath* right = rhs;
@@ -296,6 +303,70 @@ static int capture_git_line(const char* repo_root,
     return 0;
 }
 
+static void free_git_repo_paths(GitRepoPaths* repo) {
+    if (!repo) {
+        return;
+    }
+    free(repo->repo_root);
+    free(repo->prefix);
+    repo->repo_root = NULL;
+    repo->prefix = NULL;
+}
+
+static int capture_git_repo_root(int quiet_probe, char** repo_root_out, GitProbeResult* probe_result) {
+    return capture_git_line(".", "--show-toplevel", quiet_probe, repo_root_out, probe_result);
+}
+
+static int load_git_repo_paths(int quiet_probe, GitRepoPaths* repo, GitProbeResult* probe_result) {
+    if (!repo) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    repo->repo_root = NULL;
+    repo->prefix = NULL;
+
+    if (capture_git_repo_root(quiet_probe, &repo->repo_root, probe_result) != 0) {
+        return -1;
+    }
+    if (capture_git_line(".", "--show-prefix", quiet_probe, &repo->prefix, probe_result) != 0) {
+        free_git_repo_paths(repo);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int copy_path_basename(const char* path, char* buffer, size_t buffer_size) {
+    char path_copy[MAX_PATH_LENGTH];
+    size_t path_len;
+    char* base;
+
+    if (!path || !buffer || buffer_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    path_len = strlen(path);
+    if (path_len >= sizeof(path_copy)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(path_copy, path, path_len + 1);
+
+    base = basename(path_copy);
+    if (!base || base[0] == '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+    if (snprintf(buffer, buffer_size, "%s", base) < 0 || strlen(base) >= buffer_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return 0;
+}
+
 static int append_selected_path(SelectedPath** paths,
                                 size_t* count,
                                 size_t* capacity,
@@ -402,16 +473,15 @@ static int append_literal_selected_path(SelectedPath** paths,
 
 static int parse_name_only_output(const unsigned char* output,
                                   size_t output_len,
-                                  const char* repo_root,
-                                  const char* prefix,
+                                  const GitRepoPaths* repo,
                                   SelectedPath** paths_out,
                                   size_t* count_out) {
     SelectedPath* paths = NULL;
     size_t count = 0;
     size_t capacity = 0;
     size_t start = 0;
-    size_t prefix_len = strlen(prefix);
-    size_t repo_root_len = strlen(repo_root);
+    size_t prefix_len = strlen(repo->prefix);
+    size_t repo_root_len = strlen(repo->repo_root);
 
     while (start < output_len) {
         size_t end = start;
@@ -424,9 +494,9 @@ static int parse_name_only_output(const unsigned char* output,
             if (append_selected_path(&paths,
                                      &count,
                                      &capacity,
-                                     repo_root,
+                                     repo->repo_root,
                                      repo_root_len,
-                                     prefix,
+                                     repo->prefix,
                                      prefix_len,
                                      repo_rel,
                                      repo_rel_len,
@@ -499,16 +569,15 @@ static int next_nul_terminated_field(const unsigned char* output,
 
 static int parse_name_status_output(const unsigned char* output,
                                     size_t output_len,
-                                    const char* repo_root,
-                                    const char* prefix,
+                                    const GitRepoPaths* repo,
                                     SelectedPath** paths_out,
                                     size_t* count_out) {
     SelectedPath* paths = NULL;
     size_t count = 0;
     size_t capacity = 0;
     size_t start = 0;
-    size_t prefix_len = strlen(prefix);
-    size_t repo_root_len = strlen(repo_root);
+    size_t prefix_len = strlen(repo->prefix);
+    size_t repo_root_len = strlen(repo->repo_root);
 
     while (start < output_len) {
         const char* status = NULL;
@@ -542,9 +611,9 @@ static int parse_name_status_output(const unsigned char* output,
             if (append_selected_path(&paths,
                                      &count,
                                      &capacity,
-                                     repo_root,
+                                     repo->repo_root,
                                      repo_root_len,
-                                     prefix,
+                                     repo->prefix,
                                      prefix_len,
                                      second_path,
                                      second_path_len,
@@ -559,9 +628,9 @@ static int parse_name_status_output(const unsigned char* output,
         if (append_selected_path(&paths,
                                  &count,
                                  &capacity,
-                                 repo_root,
+                                 repo->repo_root,
                                  repo_root_len,
-                                 prefix,
+                                 repo->prefix,
                                  prefix_len,
                                  first_path,
                                  first_path_len,
@@ -579,6 +648,90 @@ static int parse_name_status_output(const unsigned char* output,
 
     *paths_out = paths;
     *count_out = count;
+    return 0;
+}
+
+static int parse_git_selected_paths(FileSelectionMode mode,
+                                    const unsigned char* output,
+                                    size_t output_len,
+                                    const GitRepoPaths* repo,
+                                    SelectedPath** paths_out,
+                                    size_t* count_out) {
+    if (!repo) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (mode == FILE_SELECTION_GIT_WORKTREE) {
+        return parse_name_only_output(output, output_len, repo, paths_out, count_out);
+    }
+
+    return parse_name_status_output(output, output_len, repo, paths_out, count_out);
+}
+
+static int append_arg(const char** args, size_t args_size, size_t* argc, const char* arg) {
+    if (!args || !argc || !arg) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (*argc + 1 >= args_size) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    args[(*argc)++] = arg;
+    return 0;
+}
+
+static int build_git_selection_args(const GitRepoPaths* repo,
+                                    FileSelectionMode mode,
+                                    const char* diff_range,
+                                    const char** args,
+                                    size_t args_size) {
+    size_t argc = 0;
+
+    if (!repo || !args || args_size < 1) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (append_arg(args, args_size, &argc, "git") != 0 ||
+        append_arg(args, args_size, &argc, "-C") != 0 ||
+        append_arg(args, args_size, &argc, repo->repo_root) != 0 ||
+        append_arg(args, args_size, &argc, (mode == FILE_SELECTION_GIT_WORKTREE) ? "ls-files" : "diff") != 0) {
+        return -1;
+    }
+    if (mode == FILE_SELECTION_GIT_WORKTREE) {
+        if (append_arg(args, args_size, &argc, "--cached") != 0 ||
+            append_arg(args, args_size, &argc, "--others") != 0 ||
+            append_arg(args, args_size, &argc, "--exclude-standard") != 0) {
+            return -1;
+        }
+    } else {
+        if (mode == FILE_SELECTION_GIT_STAGED) {
+            if (append_arg(args, args_size, &argc, "--cached") != 0) {
+                return -1;
+            }
+        }
+        if (append_arg(args, args_size, &argc, "--name-status") != 0 ||
+            append_arg(args, args_size, &argc, "--diff-filter=AMR") != 0) {
+            return -1;
+        }
+        if (mode == FILE_SELECTION_GIT_DIFF) {
+            if (append_arg(args, args_size, &argc, diff_range) != 0) {
+                return -1;
+            }
+        }
+    }
+    if (append_arg(args, args_size, &argc, "-z") != 0) {
+        return -1;
+    }
+    if (repo->prefix[0] != '\0') {
+        if (append_arg(args, args_size, &argc, "--") != 0 ||
+            append_arg(args, args_size, &argc, repo->prefix) != 0) {
+            return -1;
+        }
+    }
+    args[argc] = NULL;
     return 0;
 }
 
@@ -647,10 +800,8 @@ int collect_git_paths(FileSelectionMode mode,
                       SelectedPath** paths_out,
                       size_t* count_out,
                       GitPathResult* result_out) {
-    char* repo_root = NULL;
-    char* prefix = NULL;
-    const char* diff_filter = "--diff-filter=AMR";
-    const char* args[13];
+    GitRepoPaths repo = {0};
+    const char* args[GIT_SELECTION_ARGS_MAX];
     unsigned char* output = NULL;
     size_t output_len = 0;
     int exit_status = 0;
@@ -667,7 +818,7 @@ int collect_git_paths(FileSelectionMode mode,
     }
 
     errno = 0;
-    if (capture_git_line(".", "--show-toplevel", quiet_probe, &repo_root, &probe_result) != 0) {
+    if (load_git_repo_paths(quiet_probe, &repo, &probe_result) != 0) {
         if (quiet_probe && probe_result == GIT_PROBE_FALLBACK) {
             status = 0;
             goto cleanup;
@@ -679,39 +830,9 @@ int collect_git_paths(FileSelectionMode mode,
         }
         goto cleanup;
     }
-    if (capture_git_line(".", "--show-prefix", quiet_probe, &prefix, &probe_result) != 0) {
-        if (quiet_probe && probe_result == GIT_PROBE_FALLBACK) {
-            status = 0;
-            goto cleanup;
-        }
+    if (build_git_selection_args(&repo, mode, diff_range, args, GIT_SELECTION_ARGS_MAX) != 0) {
         goto cleanup;
     }
-
-    size_t argc = 0;
-    args[argc++] = "git";
-    args[argc++] = "-C";
-    args[argc++] = repo_root;
-    args[argc++] = (mode == FILE_SELECTION_GIT_WORKTREE) ? "ls-files" : "diff";
-    if (mode == FILE_SELECTION_GIT_WORKTREE) {
-        args[argc++] = "--cached";
-        args[argc++] = "--others";
-        args[argc++] = "--exclude-standard";
-    } else {
-        if (mode == FILE_SELECTION_GIT_STAGED) {
-            args[argc++] = "--cached";
-        }
-        args[argc++] = "--name-status";
-        args[argc++] = diff_filter;
-        if (mode == FILE_SELECTION_GIT_DIFF) {
-            args[argc++] = diff_range;
-        }
-    }
-    args[argc++] = "-z";
-    if (prefix[0] != '\0') {
-        args[argc++] = "--";
-        args[argc++] = prefix;
-    }
-    args[argc] = NULL;
 
     if (run_command_capture(args, 0, &output, &output_len, &exit_status, &exec_errno) != 0) {
         perror("Error running git");
@@ -728,9 +849,7 @@ int collect_git_paths(FileSelectionMode mode,
         goto cleanup;
     }
 
-    if ((mode == FILE_SELECTION_GIT_WORKTREE
-            ? parse_name_only_output(output, output_len, repo_root, prefix, &paths, &parsed_count)
-            : parse_name_status_output(output, output_len, repo_root, prefix, &paths, &parsed_count)) != 0) {
+    if (parse_git_selected_paths(mode, output, output_len, &repo, &paths, &parsed_count) != 0) {
         goto cleanup;
     }
 
@@ -744,15 +863,13 @@ int collect_git_paths(FileSelectionMode mode,
 
 cleanup:
     free(output);
-    free(repo_root);
-    free(prefix);
+    free_git_repo_paths(&repo);
     free_selected_paths(paths, parsed_count);
     return status;
 }
 
 int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_size) {
     char cwd[MAX_PATH_LENGTH];
-    char path_copy[MAX_PATH_LENGTH];
     char* repo_root = NULL;
     const char* source = NULL;
 
@@ -763,7 +880,7 @@ int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_
 
     (void)mode;
 
-    if (capture_git_line(".", "--show-toplevel", 1, &repo_root, NULL) == 0) {
+    if (capture_git_repo_root(1, &repo_root, NULL) == 0) {
         source = repo_root;
     } else {
         if (!getcwd(cwd, sizeof(cwd))) {
@@ -773,23 +890,8 @@ int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_
         source = cwd;
     }
 
-    size_t path_len = strlen(source);
-    if (path_len >= sizeof(path_copy)) {
+    if (copy_path_basename(source, buffer, buffer_size) != 0) {
         free(repo_root);
-        errno = ENAMETOOLONG;
-        return -1;
-    }
-    memcpy(path_copy, source, path_len + 1);
-
-    char* base = basename(path_copy);
-    if (!base || base[0] == '\0') {
-        free(repo_root);
-        errno = EINVAL;
-        return -1;
-    }
-    if (snprintf(buffer, buffer_size, "%s", base) < 0 || strlen(base) >= buffer_size) {
-        free(repo_root);
-        errno = ENAMETOOLONG;
         return -1;
     }
 
