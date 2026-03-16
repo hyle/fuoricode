@@ -73,6 +73,7 @@ void print_usage(const char* argv0) {
     printf("      --tree          Include a directory tree section (default)\n");
     printf("      --no-tree       Omit the directory tree section\n");
     printf("      --tree-depth    Limit tree rendering depth to N levels\n");
+    printf("      --line-numbers  Prefix exported code lines with line numbers\n");
     printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
     printf("      --warn-tokens   Warn if estimated tokens exceed N (default: %d)\n",
            DEFAULT_WARN_TOKENS);
@@ -145,6 +146,8 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->show_tree = 1;
         } else if (strcmp(argv[i], "--no-tree") == 0) {
             options->show_tree = 0;
+        } else if (strcmp(argv[i], "--line-numbers") == 0) {
+            options->show_line_numbers = 1;
         } else if (strcmp(argv[i], "--tree-depth") == 0) {
             if (i + 1 < argc) {
                 if (parse_positive_size_value(argv[++i], "tree depth", SIZE_MAX, &options->tree_depth) != 0) {

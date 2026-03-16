@@ -279,7 +279,7 @@ int main(int argc, char* argv[]) {
     if (options.resolved_mode == FILE_SELECTION_RECURSIVE) {
         if (load_ignore_patterns(IGNORE_FILE, &ctx.ignore_patterns, &ctx.ignore_count) != 0) {
             fprintf(stderr, "Error: Failed to initialize ignore patterns.\n");
-            return 1;
+            goto cleanup;
         }
     }
 
@@ -336,6 +336,7 @@ int main(int argc, char* argv[]) {
     render_ctx.selected_paths = selected_paths;
     render_ctx.selected_count = selected_count;
     render_ctx.diff_range = options.diff_range;
+    render_ctx.show_line_numbers = options.show_line_numbers;
     render_ctx.show_tree = ctx.show_tree;
     render_ctx.tree_depth = ctx.tree_depth;
 
@@ -429,7 +430,7 @@ int main(int argc, char* argv[]) {
     }
 
     errno = 0;
-    if (render_export_plan(output_file, &plan, &render_info, ctx.verbose) != 0) {
+    if (render_export_plan(output_file, &plan, &render_info, &render_ctx, ctx.verbose) != 0) {
         if (errno != 0) {
             perror("Error processing export files");
         } else {

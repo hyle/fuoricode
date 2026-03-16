@@ -66,6 +66,7 @@ trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
 (cd "$BIN_DIR" && "$BIN" --help >"$TMPDIR/help_stdout.txt" 2>"$TMPDIR/help_stderr.txt")
 assert_contains "$TMPDIR/help_stdout.txt" "--allow-sensitive"
+assert_contains "$TMPDIR/help_stdout.txt" "--line-numbers"
 assert_file_equals "$TMPDIR/help_stderr.txt" ""
 
 OUTSIDE="$TMPDIR/outside"
@@ -98,6 +99,21 @@ assert_not_contains "$OUTSIDE/command_stderr.txt" "Codebase exported to export.m
 assert_contains "$OUTSIDE/redirected.md" "## main.c"
 assert_contains "$OUTSIDE/redirected.md" "## notes.md"
 assert_not_contains "$OUTSIDE/redirected.md" "redirected.md"
+
+LINE_NUMBERS_DIR="$TMPDIR/line_numbers"
+mkdir -p "$LINE_NUMBERS_DIR"
+cat >"$LINE_NUMBERS_DIR/main.c" <<'EOF_LINE_NUMBERS'
+#include <stdio.h>
+int main(void) { return 0; }
+EOF_LINE_NUMBERS
+
+(cd "$LINE_NUMBERS_DIR" && "$BIN" --no-git --no-tree --line-numbers -o - >line_numbers_stdout.txt 2>line_numbers_stderr.txt)
+assert_contains "$LINE_NUMBERS_DIR/line_numbers_stdout.txt" "## main.c"
+assert_contains "$LINE_NUMBERS_DIR/line_numbers_stdout.txt" "Line numbers: on"
+assert_contains "$LINE_NUMBERS_DIR/line_numbers_stdout.txt" "1 | #include <stdio.h>"
+assert_contains "$LINE_NUMBERS_DIR/line_numbers_stdout.txt" "2 | int main(void) { return 0; }"
+assert_not_contains "$LINE_NUMBERS_DIR/line_numbers_stdout.txt" "3 |"
+assert_not_contains "$LINE_NUMBERS_DIR/line_numbers_stderr.txt" "Warning:"
 
 VERBOSE_DIR="$TMPDIR/verbose"
 mkdir -p "$VERBOSE_DIR"

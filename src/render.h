@@ -25,6 +25,7 @@ typedef struct {
     const SelectedPath* selected_paths;
     size_t selected_count;
     const char* diff_range;
+    int show_line_numbers;
     int show_tree;
     size_t tree_depth;
 } ExportRenderContext;
@@ -37,6 +38,10 @@ int calculate_export_metrics(const ExportPlan* plan,
                              ExportMetrics* metrics);
 int write_export_header(FILE* out, const ExportRenderContext* ctx);
 int write_change_context(FILE* out, const ExportRenderContext* ctx);
-int render_export_plan(FILE* out, const ExportPlan* plan, const RenderPlanInfo* info, int verbose);
+int render_export_plan(FILE* out,
+                       const ExportPlan* plan,
+                       const RenderPlanInfo* info,
+                       const ExportRenderContext* ctx,
+                       int verbose);
 
 #endif
