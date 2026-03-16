@@ -64,6 +64,10 @@ assert_occurrences() {
 TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/fuori-cli-test.XXXXXX")
 trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
+(cd "$BIN_DIR" && "$BIN" --help >"$TMPDIR/help_stdout.txt" 2>"$TMPDIR/help_stderr.txt")
+assert_contains "$TMPDIR/help_stdout.txt" "--allow-sensitive"
+assert_file_equals "$TMPDIR/help_stderr.txt" ""
+
 OUTSIDE="$TMPDIR/outside"
 mkdir -p "$OUTSIDE"
 cat >"$OUTSIDE/main.c" <<'EOF_OUTSIDE'
@@ -111,7 +115,42 @@ awk 'BEGIN { for (i = 0; i < 2048; i++) printf "x"; printf "\n" }' >"$VERBOSE_DI
 ln -s main.c "$VERBOSE_DIR/link.c"
 
 (cd "$VERBOSE_DIR" && "$BIN" -v -s 1 -o - >verbose_stdout.txt 2>verbose_stderr.txt)
-assert_contains "$VERBOSE_DIR/verbose_stderr.txt" "Skipped: binary/empty=1, too_large=1, ignored=1, symlink=1"
+assert_contains "$VERBOSE_DIR/verbose_stderr.txt" "Skipped: binary/empty=1, too_large=1, ignored=1, symlink=1, sensitive=0"
+
+SENSITIVE_NAME_DIR="$TMPDIR/sensitive_name"
+mkdir -p "$SENSITIVE_NAME_DIR"
+cat >"$SENSITIVE_NAME_DIR/main.c" <<'EOF_SENSITIVE_NAME_MAIN'
+int main(void) { return 0; }
+EOF_SENSITIVE_NAME_MAIN
+cat >"$SENSITIVE_NAME_DIR/credentials.txt" <<'EOF_SENSITIVE_NAME_SECRET'
+plain text but sensitive by filename
+EOF_SENSITIVE_NAME_SECRET
+(cd "$SENSITIVE_NAME_DIR" && "$BIN" --no-git -o - >sensitive_name_stdout.txt 2>"$TMPDIR/sensitive_name_stderr.txt")
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## main.c"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "credentials.txt"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials.txt"
+
+(cd "$SENSITIVE_NAME_DIR" && "$BIN" --no-git --allow-sensitive -o - >sensitive_name_allow_stdout.txt 2>"$TMPDIR/sensitive_name_allow_stderr.txt")
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## credentials.txt"
+assert_not_contains "$TMPDIR/sensitive_name_allow_stderr.txt" "Warning: Skipping sensitive file"
+
+SENSITIVE_CONTENT_DIR="$TMPDIR/sensitive_content"
+mkdir -p "$SENSITIVE_CONTENT_DIR"
+cat >"$SENSITIVE_CONTENT_DIR/main.c" <<'EOF_SENSITIVE_CONTENT_MAIN'
+int main(void) { return 0; }
+EOF_SENSITIVE_CONTENT_MAIN
+cat >"$SENSITIVE_CONTENT_DIR/notes.txt" <<'EOF_SENSITIVE_CONTENT_SECRET'
+api_key=sk-abcdefghijklmnopqrstuvwxyz123456
+EOF_SENSITIVE_CONTENT_SECRET
+(cd "$SENSITIVE_CONTENT_DIR" && "$BIN" --no-git -o - >sensitive_content_stdout.txt 2>"$TMPDIR/sensitive_content_stderr.txt")
+assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## main.c"
+assert_not_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## notes.txt"
+assert_contains "$TMPDIR/sensitive_content_stderr.txt" "Warning: Skipping sensitive file ./notes.txt"
+assert_not_contains "$TMPDIR/sensitive_content_stderr.txt" "sk-abcdefghijklmnopqrstuvwxyz123456"
+
+(cd "$SENSITIVE_CONTENT_DIR" && "$BIN" --no-git --allow-sensitive -o - >sensitive_content_allow_stdout.txt 2>"$TMPDIR/sensitive_content_allow_stderr.txt")
+assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_allow_stdout.txt" "## notes.txt"
+assert_not_contains "$TMPDIR/sensitive_content_allow_stderr.txt" "Warning: Skipping sensitive file"
 
 (cd "$OUTSIDE" && "$BIN" -v -o verbose_export.md >verbose_file_stdout.txt 2>verbose_file_stderr.txt)
 assert_file_equals "$OUTSIDE/verbose_file_stdout.txt" ""
@@ -422,6 +461,30 @@ assert_contains "$STAGED_REPO/unstaged_stdout.txt" "Files changed: 1"
 assert_contains "$STAGED_REPO/unstaged_stdout.txt" "- M beta.c"
 assert_contains "$STAGED_REPO/unstaged_stdout.txt" "## beta.c"
 assert_not_contains "$STAGED_REPO/unstaged_stdout.txt" "- A added.c"
+
+SENSITIVE_STAGED_REPO="$TMPDIR/sensitive_staged_repo"
+mkdir -p "$SENSITIVE_STAGED_REPO"
+(cd "$SENSITIVE_STAGED_REPO" && git init -q)
+cat >"$SENSITIVE_STAGED_REPO/safe.c" <<'EOF_SENSITIVE_STAGED_BASE'
+int safe(void) { return 1; }
+EOF_SENSITIVE_STAGED_BASE
+(cd "$SENSITIVE_STAGED_REPO" && git add safe.c && \
+    git -c user.name='fuori tests' -c user.email='fuori@example.com' commit -qm base)
+cat >"$SENSITIVE_STAGED_REPO/safe.c" <<'EOF_SENSITIVE_STAGED_MOD'
+int safe(void) { return 2; }
+EOF_SENSITIVE_STAGED_MOD
+cat >"$SENSITIVE_STAGED_REPO/credentials.txt" <<'EOF_SENSITIVE_STAGED_SECRET'
+do not export me
+EOF_SENSITIVE_STAGED_SECRET
+(cd "$SENSITIVE_STAGED_REPO" && git add safe.c credentials.txt)
+
+(cd "$SENSITIVE_STAGED_REPO" && "$BIN" --staged --no-tree -o - >sensitive_staged_stdout.txt 2>sensitive_staged_stderr.txt)
+assert_contains "$SENSITIVE_STAGED_REPO/sensitive_staged_stdout.txt" "## Change Context"
+assert_contains "$SENSITIVE_STAGED_REPO/sensitive_staged_stdout.txt" "Files changed: 1"
+assert_contains "$SENSITIVE_STAGED_REPO/sensitive_staged_stdout.txt" "- M safe.c"
+assert_contains "$SENSITIVE_STAGED_REPO/sensitive_staged_stdout.txt" "## safe.c"
+assert_not_contains "$SENSITIVE_STAGED_REPO/sensitive_staged_stdout.txt" "credentials.txt"
+assert_contains "$SENSITIVE_STAGED_REPO/sensitive_staged_stderr.txt" "Warning: Skipping sensitive file credentials.txt"
 
 DIFF_REPO="$TMPDIR/diff_repo"
 mkdir -p "$DIFF_REPO"

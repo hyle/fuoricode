@@ -21,6 +21,7 @@ These implementation choices are worth preserving because they match the tool's 
 - Git integration is pragmatic: `fuori` relies on the system `git` binary instead of a heavier embedded Git library, while still falling back to the filesystem walker outside repositories.
 - Subprocess handling is defensive: Git commands use careful fork/exec handling so `execvp` failures can be reported reliably rather than inferred indirectly.
 - Content filtering is intentionally strict: the collector is biased toward exporting UTF-8-like source text and skipping inputs that are likely to pollute LLM context.
+- Secret protection should stay simple and default-on: block obviously sensitive filenames and a short list of high-signal content patterns, warn generically, and allow an explicit per-run override.
 - Token estimation is artifact-based: warnings and hard limits are derived from the final rendered Markdown structure rather than just raw source bytes.
 - Output handling is atomic: token-limit refusal happens before destination mutation, file output uses `mkstemp` plus `rename`, and temp/final output files are excluded from collection via inode/device checks.
 - Git-backed and filesystem-backed selection stay cleanly separated: auto mode prefers Git and falls back quietly, while explicit Git modes remain hard Git-dependent and preserve subtree scoping.
@@ -61,7 +62,7 @@ The local ignore engine exists to support:
 
 It supports common `.gitignore`-style matching, including recursive `**` globs, but it is not intended to reimplement Git's full layered ignore model.
 
-For stdin-selected paths, the caller chooses the candidate set and the normal export-time gate still applies afterward: regular-file validation, symlink skipping, UTF-8/binary filtering, size limits, output self-exclusion, and deterministic final ordering.
+For stdin-selected paths, the caller chooses the candidate set and the normal export-time gate still applies afterward: regular-file validation, symlink skipping, UTF-8/binary filtering, sensitive-file protection, size limits, output self-exclusion, and deterministic final ordering.
 
 ## Stdin Selection Semantics
 

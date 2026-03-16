@@ -20,6 +20,7 @@ typedef struct {
     int no_clobber;
     int output_is_stdout;
     int show_tree;
+    int allow_sensitive;
     size_t max_file_size;
     size_t tree_depth;
     size_t warn_tokens;
@@ -35,6 +36,7 @@ typedef struct {
     size_t skipped_too_large;
     size_t skipped_ignored;
     size_t skipped_symlink;
+    size_t skipped_sensitive;
 } AppContext;
 
 typedef enum {
