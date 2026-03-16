@@ -45,6 +45,11 @@ static int add_size(size_t* total, size_t amount) {
     return 0;
 }
 
+typedef struct {
+    FILE* out;
+    size_t* total;
+} RenderSink;
+
 static const char* export_description(FileSelectionMode mode) {
     switch (mode) {
         case FILE_SELECTION_GIT_WORKTREE:
@@ -105,6 +110,7 @@ static const char* change_type_label(SelectedPathChangeType change_type) {
 }
 
 static size_t estimate_tokens(size_t byte_count) {
+    /* Approximate 1 token per 3.5 bytes using integer math to avoid floating point. */
     return (byte_count / 7) * 2 + ((byte_count % 7) * 2) / 7;
 }
 
@@ -117,73 +123,85 @@ static int needs_markdown_escape(unsigned char c) {
     return strchr(markdown_meta, c) != NULL;
 }
 
-static int write_markdown_path(FILE* out, const char* path) {
+static int sink_write_text(RenderSink* sink, const char* text) {
+    if (!sink || !text) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (sink->out) {
+        return fuori_write_text(sink->out, text);
+    }
+    if (sink->total) {
+        return fuori_count_text_bytes(sink->total, text);
+    }
+    errno = EINVAL;
+    return -1;
+}
+
+static int sink_write_char(RenderSink* sink, char c) {
+    if (!sink) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (sink->out) {
+        return (fputc(c, sink->out) == EOF) ? -1 : 0;
+    }
+    if (sink->total) {
+        return add_size(sink->total, 1);
+    }
+    errno = EINVAL;
+    return -1;
+}
+
+static int emit_markdown_path(RenderSink* sink, const char* path) {
     for (const unsigned char* p = (const unsigned char*)path; *p != '\0'; p++) {
         unsigned char c = *p;
         if (c == '&') {
-            if (fuori_write_text(out, "&amp;") != 0) return -1;
+            if (sink_write_text(sink, "&amp;") != 0) return -1;
             continue;
         }
         if (c == '<') {
-            if (fuori_write_text(out, "&lt;") != 0) return -1;
+            if (sink_write_text(sink, "&lt;") != 0) return -1;
             continue;
         }
         if (c == '\n') {
-            if (fuori_write_text(out, "\\n") != 0) return -1;
+            if (sink_write_text(sink, "\\n") != 0) return -1;
             continue;
         }
         if (c == '\r') {
-            if (fuori_write_text(out, "\\r") != 0) return -1;
+            if (sink_write_text(sink, "\\r") != 0) return -1;
             continue;
         }
         if (c == '\t') {
-            if (fuori_write_text(out, "\\t") != 0) return -1;
+            if (sink_write_text(sink, "\\t") != 0) return -1;
             continue;
         }
         if ((c < 0x20 || c == 0x7f)) {
             char escaped[5];
             if (snprintf(escaped, sizeof(escaped), "\\x%02X", c) < 0 ||
-                fuori_write_text(out, escaped) != 0) {
+                sink_write_text(sink, escaped) != 0) {
                 return -1;
             }
             continue;
         }
-        if (needs_markdown_escape(c) && fputc('\\', out) == EOF) {
+        if (needs_markdown_escape(c) && sink_write_char(sink, '\\') != 0) {
             return -1;
         }
-        if (fputc(c, out) == EOF) {
+        if (sink_write_char(sink, (char)c) != 0) {
             return -1;
         }
     }
     return 0;
 }
 
+static int write_markdown_path(FILE* out, const char* path) {
+    RenderSink sink = {.out = out, .total = NULL};
+    return emit_markdown_path(&sink, path);
+}
+
 static int count_markdown_path_bytes(size_t* total, const char* path) {
-    for (const unsigned char* p = (const unsigned char*)path; *p != '\0'; p++) {
-        unsigned char c = *p;
-        if (c == '&') {
-            if (add_size(total, strlen("&amp;")) != 0) return -1;
-            continue;
-        }
-        if (c == '<') {
-            if (add_size(total, strlen("&lt;")) != 0) return -1;
-            continue;
-        }
-        if (c == '\n' || c == '\r' || c == '\t') {
-            if (add_size(total, 2) != 0) return -1;
-            continue;
-        }
-        if ((c < 0x20 || c == 0x7f)) {
-            if (add_size(total, 4) != 0) return -1;
-            continue;
-        }
-        if (needs_markdown_escape(c)) {
-            if (add_size(total, 2) != 0) return -1;
-            continue;
-        }
-        if (add_size(total, 1) != 0) return -1;
-    }
-    return 0;
+    RenderSink sink = {.out = NULL, .total = total};
+    return emit_markdown_path(&sink, path);
 }
 
 static int count_fence_bytes(size_t* total, size_t count, const char* lang) {
@@ -200,162 +218,102 @@ static int write_fence(FILE* out, size_t count, const char* lang) {
     return (fputc('\n', out) == EOF) ? -1 : 0;
 }
 
-static int count_export_header_bytes(size_t* total,
-                                     FileSelectionMode mode,
-                                     const char* repository,
-                                     const char* generated_at) {
-    if (!total || !repository || !generated_at) {
+static int format_size_value(size_t value, char* buffer, size_t buffer_size) {
+    if (!buffer || buffer_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (snprintf(buffer, buffer_size, "%zu", value) < 0 || strlen(buffer) >= buffer_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return 0;
+}
+
+static int emit_export_header(RenderSink* sink, const ExportRenderContext* ctx) {
+    if (!sink || !ctx || !ctx->repository || !ctx->generated_at) {
         errno = EINVAL;
         return -1;
     }
 
-    if (fuori_count_text_bytes(total, "# Codebase Export\n\n") != 0 ||
-        fuori_count_text_bytes(total, "Repository: ") != 0 ||
-        fuori_count_text_bytes(total, repository) != 0 ||
-        fuori_count_text_bytes(total, "\nMode: ") != 0 ||
-        fuori_count_text_bytes(total, export_mode_label(mode)) != 0 ||
-        fuori_count_text_bytes(total, "\nGenerated: ") != 0 ||
-        fuori_count_text_bytes(total, generated_at) != 0 ||
-        fuori_count_text_bytes(total, "\n\n") != 0 ||
-        fuori_count_text_bytes(total, export_description(mode)) != 0) {
+    if (sink_write_text(sink, "# Codebase Export\n\n") != 0 ||
+        sink_write_text(sink, "Repository: ") != 0 ||
+        sink_write_text(sink, ctx->repository) != 0 ||
+        sink_write_text(sink, "\nMode: ") != 0 ||
+        sink_write_text(sink, export_mode_label(ctx->mode)) != 0 ||
+        sink_write_text(sink, "\nGenerated: ") != 0 ||
+        sink_write_text(sink, ctx->generated_at) != 0 ||
+        sink_write_text(sink, "\n\n") != 0 ||
+        sink_write_text(sink, export_description(ctx->mode)) != 0) {
         return -1;
     }
 
     return 0;
 }
 
-static int count_change_context_bytes(size_t* total,
-                                      FileSelectionMode mode,
-                                      const SelectedPath* selected_paths,
-                                      size_t selected_count,
-                                      const char* diff_range) {
+static int emit_change_context(RenderSink* sink, const ExportRenderContext* ctx) {
     char count_buf[32];
 
-    if (!total) {
+    if (!sink || !ctx) {
         errno = EINVAL;
         return -1;
     }
-    if (!should_render_change_context(mode)) {
+    if (!should_render_change_context(ctx->mode)) {
         return 0;
     }
-    if (snprintf(count_buf, sizeof(count_buf), "%zu", selected_count) < 0) {
+    if (format_size_value(ctx->selected_count, count_buf, sizeof(count_buf)) != 0) {
         return -1;
     }
 
-    if (fuori_count_text_bytes(total, "## Change Context\n\n") != 0 ||
-        fuori_count_text_bytes(total, "Files changed: ") != 0 ||
-        fuori_count_text_bytes(total, count_buf) != 0 ||
-        fuori_count_text_bytes(total, "\n") != 0) {
+    if (sink_write_text(sink, "## Change Context\n\n") != 0 ||
+        sink_write_text(sink, "Files changed: ") != 0 ||
+        sink_write_text(sink, count_buf) != 0 ||
+        sink_write_text(sink, "\n") != 0) {
         return -1;
     }
-    if (mode == FILE_SELECTION_GIT_DIFF &&
-        diff_range &&
-        *diff_range != '\0' &&
-        (fuori_count_text_bytes(total, "Diff range: ") != 0 ||
-         fuori_count_text_bytes(total, diff_range) != 0 ||
-         fuori_count_text_bytes(total, "\n") != 0)) {
+    if (ctx->mode == FILE_SELECTION_GIT_DIFF &&
+        ctx->diff_range &&
+        *ctx->diff_range != '\0' &&
+        (sink_write_text(sink, "Diff range: ") != 0 ||
+         sink_write_text(sink, ctx->diff_range) != 0 ||
+         sink_write_text(sink, "\n") != 0)) {
         return -1;
     }
-    if (fuori_count_text_bytes(total, "\n") != 0) {
+    if (sink_write_text(sink, "\n") != 0) {
         return -1;
     }
 
-    for (size_t i = 0; i < selected_count; i++) {
-        if (fuori_count_text_bytes(total, "- ") != 0 ||
-            fuori_count_text_bytes(total, change_type_label(selected_paths[i].change_type)) != 0 ||
-            fuori_count_text_bytes(total, " ") != 0) {
+    for (size_t i = 0; i < ctx->selected_count; i++) {
+        const SelectedPath* path = &ctx->selected_paths[i];
+        if (sink_write_text(sink, "- ") != 0 ||
+            sink_write_text(sink, change_type_label(path->change_type)) != 0 ||
+            sink_write_text(sink, " ") != 0) {
             return -1;
         }
-        if (selected_paths[i].change_type == SELECTED_PATH_CHANGE_RENAMED &&
-            selected_paths[i].previous_display_path &&
-            *selected_paths[i].previous_display_path != '\0') {
-            if (count_markdown_path_bytes(total, selected_paths[i].previous_display_path) != 0 ||
-                fuori_count_text_bytes(total, " -> ") != 0) {
-                return -1;
-            }
+        if (path->change_type == SELECTED_PATH_CHANGE_RENAMED &&
+            path->previous_display_path &&
+            *path->previous_display_path != '\0' &&
+            (emit_markdown_path(sink, path->previous_display_path) != 0 ||
+             sink_write_text(sink, " -> ") != 0)) {
+            return -1;
         }
-        if (count_markdown_path_bytes(total, selected_paths[i].display_path) != 0 ||
-            fuori_count_text_bytes(total, "\n") != 0) {
+        if (emit_markdown_path(sink, path->display_path) != 0 ||
+            sink_write_text(sink, "\n") != 0) {
             return -1;
         }
     }
 
-    return fuori_count_text_bytes(total, "\n");
+    return sink_write_text(sink, "\n");
 }
 
-int write_export_header(FILE* out,
-                        FileSelectionMode mode,
-                        const char* repository,
-                        const char* generated_at) {
-    if (!out || !repository || !generated_at) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if (fuori_write_text(out, "# Codebase Export\n\n") != 0) {
-        return -1;
-    }
-
-    if (fuori_write_text(out, "Repository: ") != 0 ||
-        fuori_write_text(out, repository) != 0 ||
-        fuori_write_text(out, "\nMode: ") != 0 ||
-        fuori_write_text(out, export_mode_label(mode)) != 0 ||
-        fuori_write_text(out, "\nGenerated: ") != 0 ||
-        fuori_write_text(out, generated_at) != 0 ||
-        fuori_write_text(out, "\n\n") != 0) {
-        return -1;
-    }
-
-    return fuori_write_text(out, export_description(mode));
+int write_export_header(FILE* out, const ExportRenderContext* ctx) {
+    RenderSink sink = {.out = out, .total = NULL};
+    return emit_export_header(&sink, ctx);
 }
 
-int write_change_context(FILE* out,
-                         FileSelectionMode mode,
-                         const SelectedPath* selected_paths,
-                         size_t selected_count,
-                         const char* diff_range) {
-    if (!out) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (!should_render_change_context(mode)) {
-        return 0;
-    }
-
-    if (fprintf(out, "## Change Context\n\nFiles changed: %zu\n", selected_count) < 0) {
-        return -1;
-    }
-    if (mode == FILE_SELECTION_GIT_DIFF &&
-        diff_range &&
-        *diff_range != '\0' &&
-        fprintf(out, "Diff range: %s\n", diff_range) < 0) {
-        return -1;
-    }
-    if (fputc('\n', out) == EOF) {
-        return -1;
-    }
-
-    for (size_t i = 0; i < selected_count; i++) {
-        if (fuori_write_text(out, "- ") != 0 ||
-            fuori_write_text(out, change_type_label(selected_paths[i].change_type)) != 0 ||
-            fuori_write_text(out, " ") != 0) {
-            return -1;
-        }
-        if (selected_paths[i].change_type == SELECTED_PATH_CHANGE_RENAMED &&
-            selected_paths[i].previous_display_path &&
-            *selected_paths[i].previous_display_path != '\0') {
-            if (write_markdown_path(out, selected_paths[i].previous_display_path) != 0 ||
-                fuori_write_text(out, " -> ") != 0) {
-                return -1;
-            }
-        }
-        if (write_markdown_path(out, selected_paths[i].display_path) != 0 ||
-            fuori_write_text(out, "\n") != 0) {
-            return -1;
-        }
-    }
-
-    return fuori_write_text(out, "\n");
+int write_change_context(FILE* out, const ExportRenderContext* ctx) {
+    RenderSink sink = {.out = out, .total = NULL};
+    return emit_change_context(&sink, ctx);
 }
 
 static size_t compute_fence_length(const ExportEntry* entry) {
@@ -443,30 +401,24 @@ static int count_entry_bytes(const ExportEntry* entry, size_t fence, size_t* tot
 
 int calculate_export_metrics(const ExportPlan* plan,
                              const RenderPlanInfo* info,
-                             FileSelectionMode mode,
-                             const char* repository,
-                             const char* generated_at,
-                             const SelectedPath* selected_paths,
-                             size_t selected_count,
-                             const char* diff_range,
-                             int show_tree,
-                             size_t tree_depth,
+                             const ExportRenderContext* ctx,
                              ExportMetrics* metrics) {
     size_t total = 0;
+    RenderSink sink = {.out = NULL, .total = &total};
 
-    if (!plan || !info || !metrics || info->count != plan->count) {
+    if (!plan || !info || !ctx || !metrics || info->count != plan->count) {
         errno = EINVAL;
         return -1;
     }
 
-    if (count_export_header_bytes(&total, mode, repository, generated_at) != 0) {
+    if (emit_export_header(&sink, ctx) != 0) {
         return -1;
     }
-    if (count_change_context_bytes(&total, mode, selected_paths, selected_count, diff_range) != 0) {
+    if (emit_change_context(&sink, ctx) != 0) {
         return -1;
     }
 
-    if (show_tree && count_project_tree_bytes(plan, tree_depth, &total) != 0) {
+    if (ctx->show_tree && count_project_tree_bytes(plan, ctx->tree_depth, &total) != 0) {
         return -1;
     }
 
