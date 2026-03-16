@@ -13,6 +13,7 @@ typedef struct {
     int stdin_null_delim;
     int show_tree;
     int show_line_numbers;
+    int no_default_ignore;
     int allow_sensitive;
     size_t max_file_size;
     size_t tree_depth;

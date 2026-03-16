@@ -91,19 +91,21 @@ fuori [OPTIONS]
 | `-V`, `--version` | Show version |
 | `-v`, `--verbose` | Show progress during export |
 | `-o`, `--output <path>` | Output path (`-` for stdout) |
-| `--no-clobber` | Fail if output already exists |
-| `--allow-sensitive` | Export files even if they match sensitive-file protection rules |
-| `--no-git` | Force filesystem selection |
-| `--from-stdin` | Read paths from stdin |
 | `--staged` | Export staged files |
 | `--unstaged` | Export unstaged tracked files |
 | `--diff <range>` | Export files changed in a diff range |
+| `--from-stdin` | Read paths from stdin |
+| `-0`, `--null` | Use NUL as the stdin delimiter (requires `--from-stdin`) |
+| `--line-numbers` | Prefix exported code lines with line numbers |
 | `--tree` / `--no-tree` | Include/omit project tree (default: on) |
 | `--tree-depth <n>` | Limit tree render depth |
-| `--line-numbers` | Prefix exported code lines with line numbers |
 | `-s <size_kb>` | Max file size in KB (default: 100) |
 | `--warn-tokens <n>` | Warn above token threshold (default: 200k) |
 | `--max-tokens <n>` | Hard-fail above token threshold |
+| `--no-clobber` | Fail if output already exists |
+| `--no-git` | Force filesystem selection |
+| `--no-default-ignore` | Disable built-in default ignore patterns in filesystem mode |
+| `--allow-sensitive` | Export files even if they match sensitive-file protection rules |
 
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 
@@ -123,12 +125,13 @@ fuori -s 50                        # 50 KB file size cap
 fuori --warn-tokens 100000         # Earlier token warning
 fuori --max-tokens 270000          # Hard token budget
 fuori -o out.md --no-clobber       # Refuse to overwrite
+fuori --no-git --no-default-ignore # Disable built-in filesystem ignore defaults
 fuori --allow-sensitive            # Export files that secret protection would skip
 ```
 
 ## Ignore Rules
 
-Place a `.gitignore` file in the working directory to exclude files and patterns from the export.
+Filesystem mode always honors a local `.gitignore` file when present.
 These rules apply in `--no-git` mode and during automatic fallback outside Git repositories.
 
 Supported syntax:
@@ -139,7 +142,7 @@ Supported syntax:
 - Root-anchored patterns (`/pattern`)
 - Recursive globs (`**/node_modules/`, `**/*.pyc`)
 
-In filesystem mode, `fuori` also applies a built-in default ignore list when no `.gitignore` is present:
+In filesystem mode, `fuori` also applies a built-in default ignore list unless `--no-default-ignore` is set:
 
 | Category | Patterns |
 |---|---|
@@ -149,7 +152,9 @@ In filesystem mode, `fuori` also applies a built-in default ignore list when no 
 | Compiled artifacts | `*.o`, `*.a`, `*.so`, `*.exe`, `*.dll` |
 | Environment / OS | `.env`, `.DS_Store`, `*.log` |
 
-To export paths that match the default list, use `--from-stdin`.
+Use `--no-default-ignore` to disable only the built-in defaults. Local `.gitignore` rules still apply.
+
+To bypass ignore-based selection entirely, use `--from-stdin`.
 
 ## File Size Limit
 

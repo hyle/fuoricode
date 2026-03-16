@@ -67,6 +67,7 @@ trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 (cd "$BIN_DIR" && "$BIN" --help >"$TMPDIR/help_stdout.txt" 2>"$TMPDIR/help_stderr.txt")
 assert_contains "$TMPDIR/help_stdout.txt" "--allow-sensitive"
 assert_contains "$TMPDIR/help_stdout.txt" "--line-numbers"
+assert_contains "$TMPDIR/help_stdout.txt" "--no-default-ignore"
 assert_file_equals "$TMPDIR/help_stderr.txt" ""
 
 OUTSIDE="$TMPDIR/outside"
@@ -291,6 +292,31 @@ keep
 EOF_IGNORE_KEEP
 (cd "$IGNORE_NEGATION_DIR" && "$BIN" --no-git -o - >ignore_negation_stdout.txt 2>ignore_negation_stderr.txt)
 assert_not_contains "$IGNORE_NEGATION_DIR/ignore_negation_stdout.txt" "build/keep\\.txt"
+
+NO_DEFAULT_IGNORE_DIR="$TMPDIR/no_default_ignore"
+mkdir -p "$NO_DEFAULT_IGNORE_DIR/build"
+cat >"$NO_DEFAULT_IGNORE_DIR/.gitignore" <<'EOF_NO_DEFAULT_IGNORE'
+local.txt
+EOF_NO_DEFAULT_IGNORE
+cat >"$NO_DEFAULT_IGNORE_DIR/main.c" <<'EOF_NO_DEFAULT_MAIN'
+int main(void) { return 0; }
+EOF_NO_DEFAULT_MAIN
+cat >"$NO_DEFAULT_IGNORE_DIR/build/keep.txt" <<'EOF_NO_DEFAULT_BUILD'
+built artifact but intentionally exported
+EOF_NO_DEFAULT_BUILD
+cat >"$NO_DEFAULT_IGNORE_DIR/local.txt" <<'EOF_NO_DEFAULT_LOCAL'
+still ignored by local rule
+EOF_NO_DEFAULT_LOCAL
+
+(cd "$NO_DEFAULT_IGNORE_DIR" && "$BIN" --no-git --no-tree -o - >default_ignore_stdout.txt 2>default_ignore_stderr.txt)
+assert_contains "$NO_DEFAULT_IGNORE_DIR/default_ignore_stdout.txt" "## main.c"
+assert_not_contains "$NO_DEFAULT_IGNORE_DIR/default_ignore_stdout.txt" "build/keep.txt"
+assert_not_contains "$NO_DEFAULT_IGNORE_DIR/default_ignore_stdout.txt" "## local.txt"
+
+(cd "$NO_DEFAULT_IGNORE_DIR" && "$BIN" --no-git --no-default-ignore --no-tree -o - >no_default_ignore_stdout.txt 2>no_default_ignore_stderr.txt)
+assert_contains "$NO_DEFAULT_IGNORE_DIR/no_default_ignore_stdout.txt" "## main.c"
+assert_contains "$NO_DEFAULT_IGNORE_DIR/no_default_ignore_stdout.txt" "## build/keep.txt"
+assert_not_contains "$NO_DEFAULT_IGNORE_DIR/no_default_ignore_stdout.txt" "## local.txt"
 
 STDIN_DIR="$TMPDIR/stdin_selection"
 mkdir -p "$STDIN_DIR/ignored"

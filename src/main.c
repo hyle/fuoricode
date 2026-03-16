@@ -277,7 +277,10 @@ int main(int argc, char* argv[]) {
     ctx.output_path = options.output_path;
 
     if (options.resolved_mode == FILE_SELECTION_RECURSIVE) {
-        if (load_ignore_patterns(IGNORE_FILE, &ctx.ignore_patterns, &ctx.ignore_count) != 0) {
+        if (load_ignore_patterns(IGNORE_FILE,
+                                 !options.no_default_ignore,
+                                 &ctx.ignore_patterns,
+                                 &ctx.ignore_count) != 0) {
             fprintf(stderr, "Error: Failed to initialize ignore patterns.\n");
             goto cleanup;
         }

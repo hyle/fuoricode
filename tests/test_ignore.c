@@ -56,7 +56,7 @@ static int run_case(const IgnoreCase* test_case) {
         return 1;
     }
 
-    if (load_ignore_patterns(template, &patterns, &count) != 0) {
+    if (load_ignore_patterns(template, 0, &patterns, &count) != 0) {
         perror("load_ignore_patterns");
         unlink(template);
         return 1;
