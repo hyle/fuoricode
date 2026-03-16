@@ -71,6 +71,9 @@ int main(void) { return 0; }
 EOF_OUTSIDE
 
 (cd "$OUTSIDE" && "$BIN" -o - >stdout.txt 2>stderr.txt)
+assert_contains "$OUTSIDE/stdout.txt" "Repository: outside"
+assert_contains "$OUTSIDE/stdout.txt" "Mode: recursive"
+assert_contains "$OUTSIDE/stdout.txt" "Generated: "
 assert_contains "$OUTSIDE/stdout.txt" "This document contains all the source code files from the current directory subtree using the local filesystem walker."
 assert_not_contains "$OUTSIDE/stderr.txt" "Git file-selection modes require"
 assert_not_contains "$OUTSIDE/stderr.txt" "git rev-parse failed"
@@ -356,6 +359,8 @@ ignore me
 EOF_IGNORED
 
 (cd "$REPO/sub" && "$BIN" -o - >stdout.txt 2>stderr.txt)
+assert_contains "$REPO/sub/stdout.txt" "Repository: repo"
+assert_contains "$REPO/sub/stdout.txt" "Mode: worktree"
 assert_contains "$REPO/sub/stdout.txt" "This document contains tracked files plus untracked, non-ignored files from the current Git subtree."
 assert_contains "$REPO/sub/stdout.txt" "├── tracked.c"
 assert_contains "$REPO/sub/stdout.txt" "└── untracked.py"

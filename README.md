@@ -1,6 +1,7 @@
 # Fuoricode
 
-A command-line tool that exports codebases into single Markdown artifacts optimized for LLM context and code review workflows. 
+A command-line tool that exports codebases into single Markdown artifacts optimized for LLM context and code review workflows.
+
 ```bash
 fuori --staged -o review.md
 ```
@@ -74,7 +75,7 @@ Run `fuori` in any directory:
 fuori
 ```
 
-By default, it writes `_export.md` to the current directory. Inside a Git repo, it uses Git's view of the working tree (tracked + untracked non-ignored files). Outside a repo, or with `--no-git`, it falls back to the recursive filesystem walking.
+By default it writes `_export.md` to the current directory. Inside a Git repo, it uses Git's view of the working tree (tracked + untracked non-ignored files). Outside a repo, or with `--no-git`, it falls back to the recursive filesystem walking.
 
 ### Options
 
@@ -105,6 +106,7 @@ fuori [OPTIONS]
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 
 **Examples:**
+
 ```bash
 fuori                              # Export current working tree
 fuori --staged -o review.md        # Staged changes to a named file
@@ -225,7 +227,7 @@ UTF-16 and other non-UTF-8 text encodings are currently treated as non-exportabl
 
 The output markdown file will contain:
 
-1. A preamble describing the export mode
+1. A preamble with repository, mode, and generation timestamp metadata plus a short mode description
 2. A project tree section that reflects the exported artifact (enabled by default)
 3. A header with the file path
 4. A code block with the file content
@@ -235,6 +237,10 @@ The output markdown file will contain:
 Example file contents excerpt (the `Makefile` section is omitted for brevity):
 ````markdown
 # Codebase Export
+
+Repository: my-project
+Mode: recursive
+Generated: 2026-03-16T12:34:56Z
 
 This document contains all the source code files from the current directory subtree.
 
