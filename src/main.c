@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "app.h"
@@ -145,6 +146,30 @@ static int make_temp_output_template(const char* output_path, char* tmpl, size_t
     return 0;
 }
 
+static int format_generated_timestamp(char* buffer, size_t buffer_size) {
+    time_t now;
+    struct tm utc_tm;
+
+    if (!buffer || buffer_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    now = time(NULL);
+    if (now == (time_t)-1) {
+        return -1;
+    }
+    if (!gmtime_r(&now, &utc_tm)) {
+        return -1;
+    }
+    if (strftime(buffer, buffer_size, "%Y-%m-%dT%H:%M:%SZ", &utc_tm) == 0) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     CliOptions options;
     AppContext ctx = {0};
@@ -158,6 +183,8 @@ int main(int argc, char* argv[]) {
     int output_needs_close = 0;
     FILE* output_file = NULL;
     char temp_output_path[MAX_PATH_LENGTH];
+    char repository_name[MAX_PATH_LENGTH];
+    char generated_at[32];
     temp_output_path[0] = '\0';
     if (parse_cli_options(argc, argv, &options) != 0) {
         return 1;
@@ -227,7 +254,24 @@ int main(int argc, char* argv[]) {
         goto cleanup;
     }
 
-    if (calculate_export_metrics(&plan, &render_info, options.resolved_mode, ctx.show_tree, ctx.tree_depth, &metrics) != 0) {
+    if (resolve_repository_name(options.resolved_mode, repository_name, sizeof(repository_name)) != 0) {
+        perror("Error resolving repository name");
+        goto cleanup;
+    }
+
+    if (format_generated_timestamp(generated_at, sizeof(generated_at)) != 0) {
+        perror("Error formatting export timestamp");
+        goto cleanup;
+    }
+
+    if (calculate_export_metrics(&plan,
+                                 &render_info,
+                                 options.resolved_mode,
+                                 repository_name,
+                                 generated_at,
+                                 ctx.show_tree,
+                                 ctx.tree_depth,
+                                 &metrics) != 0) {
         perror("Error calculating export metrics");
         goto cleanup;
     }
@@ -299,7 +343,10 @@ int main(int argc, char* argv[]) {
         ctx.have_temp = 1;
     }
 
-    if (write_export_header(output_file, options.resolved_mode) != 0) {
+    if (write_export_header(output_file,
+                            options.resolved_mode,
+                            repository_name,
+                            generated_at) != 0) {
         perror("Error writing output header");
         goto cleanup;
     }

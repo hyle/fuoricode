@@ -24,6 +24,7 @@ int collect_git_paths(FileSelectionMode mode,
 int collect_stdin_paths(int null_delim,
                         SelectedPath** paths_out,
                         size_t* count_out);
+int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_size);
 void free_selected_paths(SelectedPath* paths, size_t count);
 
 #endif

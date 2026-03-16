@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -571,4 +572,51 @@ cleanup:
     free(prefix);
     free_selected_paths(paths, parsed_count);
     return status;
+}
+
+int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_size) {
+    char cwd[MAX_PATH_LENGTH];
+    char path_copy[MAX_PATH_LENGTH];
+    char* repo_root = NULL;
+    const char* source = NULL;
+
+    if (!buffer || buffer_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    (void)mode;
+
+    if (capture_git_line(".", "--show-toplevel", 1, &repo_root, NULL) == 0) {
+        source = repo_root;
+    } else {
+        if (!getcwd(cwd, sizeof(cwd))) {
+            free(repo_root);
+            return -1;
+        }
+        source = cwd;
+    }
+
+    size_t path_len = strlen(source);
+    if (path_len >= sizeof(path_copy)) {
+        free(repo_root);
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(path_copy, source, path_len + 1);
+
+    char* base = basename(path_copy);
+    if (!base || base[0] == '\0') {
+        free(repo_root);
+        errno = EINVAL;
+        return -1;
+    }
+    if (snprintf(buffer, buffer_size, "%s", base) < 0 || strlen(base) >= buffer_size) {
+        free(repo_root);
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    free(repo_root);
+    return 0;
 }

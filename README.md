@@ -1,6 +1,7 @@
 # fuoricode
 
-A command-line tool that exports codebases into single Markdown artifacts optimized for LLM context and code review workflows. 
+A command-line tool that exports codebases into single Markdown artifacts optimized for LLM context and code review workflows.
+
 ```bash
 fuori --staged -o review.md
 ```
@@ -74,7 +75,7 @@ Run `fuori` in any directory:
 fuori
 ```
 
-By default, it writes `_export.md` to the current directory. Inside a Git repo, it uses Git's view of the working tree (tracked + untracked non-ignored files). Outside a repo, or with `--no-git`, it falls back to the recursive filesystem walking.
+By default it writes `_export.md` to the current directory. Inside a Git repo, it uses Git's view of the working tree (tracked + untracked non-ignored files). Outside a repo, or with `--no-git`, it falls back to the recursive filesystem walking.
 
 ### Options
 
@@ -105,6 +106,7 @@ fuori [OPTIONS]
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 
 **Examples:**
+
 ```bash
 fuori                              # Export current working tree
 fuori --staged -o review.md        # Staged changes to a named file
@@ -119,29 +121,30 @@ fuori --max-tokens 180000          # Hard token budget
 fuori -o out.md --no-clobber       # Refuse to overwrite
 ```
 
-## .gitignore File
+## Ignore Rules
 
-You can create a `.gitignore` file in the directory to specify files and patterns to exclude from the export.
-These rules apply to the recursive filesystem walker, including `--no-git` mode and automatic fallback outside Git repositories.
-This tool supports common gitignore-style rules, including comments, `!` negation, trailing `/` for directories,
-root-anchored `/` patterns, and recursive `**` path globs such as `**/node_modules/` and `**/*.pyc`.
-In filesystem mode, `fuori` also seeds a small built-in default ignore list even when no `.gitignore` is present:
-`.git/`, `node_modules/`, `build/`, `dist/`, `bin/`, `.venv/`, `__pycache__/`, `.env`, `.DS_Store`,
-and common compiled/log artifacts such as `*.o`, `*.a`, `*.so`, `*.exe`, `*.dll`, and `*.log`.
-If you need those paths exported, use stdin selection or move the files outside those default patterns.
+Place a `.gitignore` file in the working directory to exclude files and patterns from the export.
+These rules apply in `--no-git` mode and during automatic fallback outside Git repositories.
 
-```
-# Ignore build directories
-build/
-dist/
+Supported syntax:
 
-# Ignore specific file types
-*.log
-*.tmp
+- Comments (`#`)
+- Negation (`!pattern`)
+- Directory trailing slash (`dir/`)
+- Root-anchored patterns (`/pattern`)
+- Recursive globs (`**/node_modules/`, `**/*.pyc`)
 
-# Ignore node_modules directory
-node_modules/
-```
+In filesystem mode, `fuori` also applies a built-in default ignore list when no `.gitignore` is present:
+
+| Category | Patterns |
+|---|---|
+| VCS | `.git/` |
+| Dependencies | `node_modules/`, `.venv/`, `__pycache__/` |
+| Build output | `build/`, `dist/`, `bin/` |
+| Compiled artifacts | `*.o`, `*.a`, `*.so`, `*.exe`, `*.dll` |
+| Environment / OS | `.env`, `.DS_Store`, `*.log` |
+
+To export paths that match the default list, use `--from-stdin`.
 
 ## File Size Limit
 
@@ -224,7 +227,7 @@ UTF-16 and other non-UTF-8 text encodings are currently treated as non-exportabl
 
 The output markdown file will contain:
 
-1. A preamble describing the export mode
+1. A preamble with repository, mode, and generation timestamp metadata plus a short mode description
 2. A project tree section that reflects the exported artifact (enabled by default)
 3. A header with the file path
 4. A code block with the file content
@@ -234,6 +237,10 @@ The output markdown file will contain:
 Example file contents excerpt (the `Makefile` section is omitted for brevity):
 ````markdown
 # Codebase Export
+
+Repository: my-project
+Mode: recursive
+Generated: 2026-03-16T12:34:56Z
 
 This document contains all the source code files from the current directory subtree.
 

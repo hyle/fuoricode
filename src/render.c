@@ -65,6 +65,26 @@ static const char* export_description(FileSelectionMode mode) {
     }
 }
 
+static const char* export_mode_label(FileSelectionMode mode) {
+    switch (mode) {
+        case FILE_SELECTION_GIT_WORKTREE:
+            return "worktree";
+        case FILE_SELECTION_GIT_STAGED:
+            return "staged";
+        case FILE_SELECTION_GIT_UNSTAGED:
+            return "unstaged";
+        case FILE_SELECTION_GIT_DIFF:
+            return "diff";
+        case FILE_SELECTION_STDIN:
+            return "stdin";
+        case FILE_SELECTION_RECURSIVE:
+            return "recursive";
+        case FILE_SELECTION_AUTO:
+        default:
+            return "auto";
+    }
+}
+
 static size_t estimate_tokens(size_t byte_count) {
     return (byte_count / 7) * 2 + ((byte_count % 7) * 2) / 7;
 }
@@ -160,8 +180,50 @@ static int write_fence(FILE* out, size_t count, const char* lang) {
     return (fputc('\n', out) == EOF) ? -1 : 0;
 }
 
-int write_export_header(FILE* out, FileSelectionMode mode) {
+static int count_export_header_bytes(size_t* total,
+                                     FileSelectionMode mode,
+                                     const char* repository,
+                                     const char* generated_at) {
+    if (!total || !repository || !generated_at) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (fuori_count_text_bytes(total, "# Codebase Export\n\n") != 0 ||
+        fuori_count_text_bytes(total, "Repository: ") != 0 ||
+        fuori_count_text_bytes(total, repository) != 0 ||
+        fuori_count_text_bytes(total, "\nMode: ") != 0 ||
+        fuori_count_text_bytes(total, export_mode_label(mode)) != 0 ||
+        fuori_count_text_bytes(total, "\nGenerated: ") != 0 ||
+        fuori_count_text_bytes(total, generated_at) != 0 ||
+        fuori_count_text_bytes(total, "\n\n") != 0 ||
+        fuori_count_text_bytes(total, export_description(mode)) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int write_export_header(FILE* out,
+                        FileSelectionMode mode,
+                        const char* repository,
+                        const char* generated_at) {
+    if (!out || !repository || !generated_at) {
+        errno = EINVAL;
+        return -1;
+    }
+
     if (fuori_write_text(out, "# Codebase Export\n\n") != 0) {
+        return -1;
+    }
+
+    if (fuori_write_text(out, "Repository: ") != 0 ||
+        fuori_write_text(out, repository) != 0 ||
+        fuori_write_text(out, "\nMode: ") != 0 ||
+        fuori_write_text(out, export_mode_label(mode)) != 0 ||
+        fuori_write_text(out, "\nGenerated: ") != 0 ||
+        fuori_write_text(out, generated_at) != 0 ||
+        fuori_write_text(out, "\n\n") != 0) {
         return -1;
     }
 
@@ -254,6 +316,8 @@ static int count_entry_bytes(const ExportEntry* entry, size_t fence, size_t* tot
 int calculate_export_metrics(const ExportPlan* plan,
                              const RenderPlanInfo* info,
                              FileSelectionMode mode,
+                             const char* repository,
+                             const char* generated_at,
                              int show_tree,
                              size_t tree_depth,
                              ExportMetrics* metrics) {
@@ -264,8 +328,7 @@ int calculate_export_metrics(const ExportPlan* plan,
         return -1;
     }
 
-    if (fuori_count_text_bytes(&total, "# Codebase Export\n\n") != 0 ||
-        fuori_count_text_bytes(&total, export_description(mode)) != 0) {
+    if (count_export_header_bytes(&total, mode, repository, generated_at) != 0) {
         return -1;
     }
 
