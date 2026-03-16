@@ -93,9 +93,12 @@ static int write_bytes(FILE* out, const void* data, size_t len) {
     return (fwrite(data, 1, len, out) == len) ? 0 : -1;
 }
 
-static int write_markdown_path(FILE* out, const char* path) {
-    static const char markdown_meta[] = "\\`*_{}[]()#+-.!|>";
+static int needs_markdown_escape(unsigned char c) {
+    static const char markdown_meta[] = "\\`*_[]";
+    return strchr(markdown_meta, c) != NULL;
+}
 
+static int write_markdown_path(FILE* out, const char* path) {
     for (const unsigned char* p = (const unsigned char*)path; *p != '\0'; p++) {
         unsigned char c = *p;
         if (c == '&') {
@@ -126,7 +129,7 @@ static int write_markdown_path(FILE* out, const char* path) {
             }
             continue;
         }
-        if (strchr(markdown_meta, c) != NULL && fputc('\\', out) == EOF) {
+        if (needs_markdown_escape(c) && fputc('\\', out) == EOF) {
             return -1;
         }
         if (fputc(c, out) == EOF) {
@@ -137,8 +140,6 @@ static int write_markdown_path(FILE* out, const char* path) {
 }
 
 static int count_markdown_path_bytes(size_t* total, const char* path) {
-    static const char markdown_meta[] = "\\`*_{}[]()#+-.!|>";
-
     for (const unsigned char* p = (const unsigned char*)path; *p != '\0'; p++) {
         unsigned char c = *p;
         if (c == '&') {
@@ -157,7 +158,7 @@ static int count_markdown_path_bytes(size_t* total, const char* path) {
             if (add_size(total, 4) != 0) return -1;
             continue;
         }
-        if (strchr(markdown_meta, c) != NULL) {
+        if (needs_markdown_escape(c)) {
             if (add_size(total, 2) != 0) return -1;
             continue;
         }
