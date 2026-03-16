@@ -109,6 +109,7 @@ Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are 
 
 ```bash
 fuori                              # Export current working tree
+fuori --unstaged                   # Export unstaged changes
 fuori --staged -o review.md        # Staged changes to a named file
 fuori --diff HEAD~3..HEAD          # Files changed in the last 3 commits
 fuori --diff main...HEAD           # Changes since branching from main
@@ -117,7 +118,7 @@ fuori --no-tree                    # Skip the project tree section
 fuori --tree-depth 2               # Shallow tree
 fuori -s 50                        # 50 KB file size cap
 fuori --warn-tokens 100000         # Earlier token warning
-fuori --max-tokens 180000          # Hard token budget
+fuori --max-tokens 270000          # Hard token budget
 fuori -o out.md --no-clobber       # Refuse to overwrite
 ```
 
@@ -159,9 +160,9 @@ Use `--no-git` to force the filesystem walker explicitly.
 | Mode | Git command |
 |---|---|
 | Default | `git ls-files -z --cached --others --exclude-standard` |
-| `--staged` | `git diff --cached --name-only --diff-filter=AMR` |
-| `--unstaged` | `git diff --name-only --diff-filter=AMR` |
-| `--diff <range>` | `git diff --name-only <range>` (two-dot and three-dot ranges both work) |
+| `--staged` | `git diff --cached --name-status --diff-filter=AMR` |
+| `--unstaged` | `git diff --name-status --diff-filter=AMR` |
+| `--diff <range>` | `git diff --name-status --diff-filter=AMR <range>` (two-dot and three-dot ranges both work) |
 
 Additional semantics:
 
@@ -170,6 +171,7 @@ Additional semantics:
 - Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
+- `--staged`, `--unstaged`, and `--diff` include a `Change Context` section with change status summaries
 - If Git selects no files, `fuori` still succeeds and writes an empty export
 
 ## Stdin File Selection
@@ -228,11 +230,12 @@ UTF-16 and other non-UTF-8 text encodings are currently treated as non-exportabl
 The output markdown file will contain:
 
 1. A preamble with repository, mode, and generation timestamp metadata plus a short mode description
-2. A project tree section that reflects the exported artifact (enabled by default)
-3. A header with the file path
-4. A code block with the file content
-5. Appropriate language identifiers for syntax highlighting
-6. A `stderr` summary of files, bytes, and estimated tokens after successful completion
+2. A `Change Context` section for `--staged`, `--unstaged`, and `--diff` exports
+3. A project tree section that reflects the exported artifact (enabled by default)
+4. A header with the file path
+5. A code block with the file content
+6. Appropriate language identifiers for syntax highlighting
+7. A `stderr` summary of files, bytes, and estimated tokens after successful completion
 
 Example file contents excerpt (the `Makefile` section is omitted for brevity):
 ````markdown

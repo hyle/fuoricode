@@ -362,6 +362,7 @@ EOF_IGNORED
 assert_contains "$REPO/sub/stdout.txt" "Repository: repo"
 assert_contains "$REPO/sub/stdout.txt" "Mode: worktree"
 assert_contains "$REPO/sub/stdout.txt" "This document contains tracked files plus untracked, non-ignored files from the current Git subtree."
+assert_not_contains "$REPO/sub/stdout.txt" "## Change Context"
 assert_contains "$REPO/sub/stdout.txt" "├── tracked.c"
 assert_contains "$REPO/sub/stdout.txt" "└── untracked.py"
 assert_not_contains "$REPO/sub/stdout.txt" "ignored.log"
@@ -375,5 +376,84 @@ if (cd "$REPO" && "$BIN" --no-git --staged >/dev/null 2>stderr_invalid.txt); the
     fail "expected --no-git --staged to fail"
 fi
 assert_contains "$REPO/stderr_invalid.txt" "--no-git cannot be combined with --from-stdin, --staged, --unstaged, or --diff"
+
+STAGED_REPO="$TMPDIR/staged_repo"
+mkdir -p "$STAGED_REPO"
+(cd "$STAGED_REPO" && git init -q)
+cat >"$STAGED_REPO/alpha.c" <<'EOF_STAGED_ALPHA_BASE'
+int alpha(void) { return 1; }
+EOF_STAGED_ALPHA_BASE
+cat >"$STAGED_REPO/beta.c" <<'EOF_STAGED_BETA_BASE'
+int beta(void) { return 2; }
+EOF_STAGED_BETA_BASE
+cat >"$STAGED_REPO/old_name.c" <<'EOF_STAGED_OLD_BASE'
+int old_name(void) { return 3; }
+EOF_STAGED_OLD_BASE
+(cd "$STAGED_REPO" && git add alpha.c beta.c old_name.c && \
+    git -c user.name='fuori tests' -c user.email='fuori@example.com' commit -qm base)
+cat >"$STAGED_REPO/alpha.c" <<'EOF_STAGED_ALPHA_MOD'
+int alpha(void) { return 10; }
+EOF_STAGED_ALPHA_MOD
+(cd "$STAGED_REPO" && git add alpha.c)
+(cd "$STAGED_REPO" && git mv old_name.c new_name.c)
+cat >"$STAGED_REPO/added.c" <<'EOF_STAGED_ADDED'
+int added(void) { return 4; }
+EOF_STAGED_ADDED
+(cd "$STAGED_REPO" && git add added.c)
+cat >"$STAGED_REPO/beta.c" <<'EOF_STAGED_BETA_MOD'
+int beta(void) { return 20; }
+EOF_STAGED_BETA_MOD
+
+(cd "$STAGED_REPO" && "$BIN" --staged --no-tree -o - >staged_stdout.txt 2>staged_stderr.txt)
+assert_contains "$STAGED_REPO/staged_stdout.txt" "Mode: staged"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "## Change Context"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "Files changed: 3"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "- A added.c"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "- M alpha.c"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "- R old_name.c -> new_name.c"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "## added.c"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "## alpha.c"
+assert_contains "$STAGED_REPO/staged_stdout.txt" "## new_name.c"
+
+(cd "$STAGED_REPO" && "$BIN" --unstaged --no-tree -o - >unstaged_stdout.txt 2>unstaged_stderr.txt)
+assert_contains "$STAGED_REPO/unstaged_stdout.txt" "Mode: unstaged"
+assert_contains "$STAGED_REPO/unstaged_stdout.txt" "## Change Context"
+assert_contains "$STAGED_REPO/unstaged_stdout.txt" "Files changed: 1"
+assert_contains "$STAGED_REPO/unstaged_stdout.txt" "- M beta.c"
+assert_contains "$STAGED_REPO/unstaged_stdout.txt" "## beta.c"
+assert_not_contains "$STAGED_REPO/unstaged_stdout.txt" "- A added.c"
+
+DIFF_REPO="$TMPDIR/diff_repo"
+mkdir -p "$DIFF_REPO"
+(cd "$DIFF_REPO" && git init -q)
+cat >"$DIFF_REPO/shared.c" <<'EOF_DIFF_SHARED_BASE'
+int shared(void) { return 1; }
+EOF_DIFF_SHARED_BASE
+cat >"$DIFF_REPO/old_name.c" <<'EOF_DIFF_OLD_BASE'
+int old_name(void) { return 2; }
+EOF_DIFF_OLD_BASE
+(cd "$DIFF_REPO" && git add shared.c old_name.c && \
+    git -c user.name='fuori tests' -c user.email='fuori@example.com' commit -qm base)
+(cd "$DIFF_REPO" && git mv old_name.c renamed.c)
+cat >"$DIFF_REPO/shared.c" <<'EOF_DIFF_SHARED_MOD'
+int shared(void) { return 10; }
+EOF_DIFF_SHARED_MOD
+cat >"$DIFF_REPO/fresh.c" <<'EOF_DIFF_FRESH'
+int fresh(void) { return 3; }
+EOF_DIFF_FRESH
+(cd "$DIFF_REPO" && git add renamed.c shared.c fresh.c && \
+    git -c user.name='fuori tests' -c user.email='fuori@example.com' commit -qm update)
+
+(cd "$DIFF_REPO" && "$BIN" --diff HEAD~1..HEAD --no-tree -o - >diff_stdout.txt 2>diff_stderr.txt)
+assert_contains "$DIFF_REPO/diff_stdout.txt" "Mode: diff"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "## Change Context"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "Files changed: 3"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "Diff range: HEAD~1..HEAD"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "- A fresh.c"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "- M shared.c"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "- R old_name.c -> renamed.c"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "## fresh.c"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "## renamed.c"
+assert_contains "$DIFF_REPO/diff_stdout.txt" "## shared.c"
 
 printf 'cli tests passed\n'

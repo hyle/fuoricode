@@ -269,6 +269,9 @@ int main(int argc, char* argv[]) {
                                  options.resolved_mode,
                                  repository_name,
                                  generated_at,
+                                 selected_paths,
+                                 selected_count,
+                                 options.diff_range,
                                  ctx.show_tree,
                                  ctx.tree_depth,
                                  &metrics) != 0) {
@@ -348,6 +351,15 @@ int main(int argc, char* argv[]) {
                             repository_name,
                             generated_at) != 0) {
         perror("Error writing output header");
+        goto cleanup;
+    }
+
+    if (write_change_context(output_file,
+                             options.resolved_mode,
+                             selected_paths,
+                             selected_count,
+                             options.diff_range) != 0) {
+        perror("Error writing change context");
         goto cleanup;
     }
 
