@@ -83,16 +83,16 @@ cat >"$OUTSIDE/notes.md" <<'EOF_NOTES'
 notes
 EOF_NOTES
 (cd "$OUTSIDE" && "$BIN" -o export.md >command_stdout.txt 2>command_stderr.txt)
-assert_contains "$OUTSIDE/export.md" "## main\\.c"
-assert_contains "$OUTSIDE/export.md" "## notes\\.md"
+assert_contains "$OUTSIDE/export.md" "## main.c"
+assert_contains "$OUTSIDE/export.md" "## notes.md"
 assert_not_contains "$OUTSIDE/export.md" "export.md"
 assert_not_contains "$OUTSIDE/export.md" ".fuori.tmp."
 assert_file_equals "$OUTSIDE/command_stdout.txt" ""
 assert_not_contains "$OUTSIDE/command_stderr.txt" "Codebase exported to export.md successfully!"
 
 (cd "$OUTSIDE" && "$BIN" -o - >redirected.md 2>redirect_stderr.txt)
-assert_contains "$OUTSIDE/redirected.md" "## main\\.c"
-assert_contains "$OUTSIDE/redirected.md" "## notes\\.md"
+assert_contains "$OUTSIDE/redirected.md" "## main.c"
+assert_contains "$OUTSIDE/redirected.md" "## notes.md"
 assert_not_contains "$OUTSIDE/redirected.md" "redirected.md"
 
 VERBOSE_DIR="$TMPDIR/verbose"
@@ -192,7 +192,7 @@ secret
 EOF_PERM_PRIVATE
 chmod 000 "$PERM_DIR/private.txt"
 (cd "$PERM_DIR" && "$BIN" -o - >permission_stdout.txt 2>permission_stderr.txt)
-assert_contains "$PERM_DIR/permission_stdout.txt" "## main\\.c"
+assert_contains "$PERM_DIR/permission_stdout.txt" "## main.c"
 assert_not_contains "$PERM_DIR/permission_stdout.txt" "private.txt"
 assert_contains "$PERM_DIR/permission_stderr.txt" "Warning: Failed to process file ./private.txt"
 
@@ -211,9 +211,9 @@ cat >"$ODD_DIR/weird & <name>.txt" <<'EOF_ODD_ESCAPED'
 symbols
 EOF_ODD_ESCAPED
 (cd "$ODD_DIR" && "$BIN" -o - >odd_stdout.txt 2>"$TMPDIR/odd_paths_stderr.txt")
-assert_contains "$ODD_DIR/odd_stdout.txt" "## file with spaces\\.txt"
-assert_contains "$ODD_DIR/odd_stdout.txt" "## café\\.py"
-assert_contains "$ODD_DIR/odd_stdout.txt" "## weird &amp; &lt;name\\>\\.txt"
+assert_contains "$ODD_DIR/odd_stdout.txt" "## file with spaces.txt"
+assert_contains "$ODD_DIR/odd_stdout.txt" "## café.py"
+assert_contains "$ODD_DIR/odd_stdout.txt" "## weird &amp; &lt;name>.txt"
 
 TREE_FENCE_DIR="$TMPDIR/tree_fence"
 mkdir -p "$TREE_FENCE_DIR/src"
@@ -257,13 +257,13 @@ EOF_STDIN_IGNORED
 
 printf 'beta.c\nalpha.c\nmissing.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_newline_stdout.txt 2>stdin_newline_stderr.txt)
 assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "This document contains files selected from caller-supplied stdin paths."
-assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "## alpha\\.c"
-assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "## beta\\.c"
+assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "## alpha.c"
+assert_contains "$STDIN_DIR/stdin_newline_stdout.txt" "## beta.c"
 assert_not_contains "$STDIN_DIR/stdin_newline_stdout.txt" "missing\\.c"
 
 printf 'alpha.c\0beta.c\0' | (cd "$STDIN_DIR" && "$BIN" --from-stdin -0 --no-tree -o - >stdin_null_stdout.txt 2>stdin_null_stderr.txt)
-assert_contains "$STDIN_DIR/stdin_null_stdout.txt" "## alpha\\.c"
-assert_contains "$STDIN_DIR/stdin_null_stdout.txt" "## beta\\.c"
+assert_contains "$STDIN_DIR/stdin_null_stdout.txt" "## alpha.c"
+assert_contains "$STDIN_DIR/stdin_null_stdout.txt" "## beta.c"
 
 : | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_empty_stdout.txt 2>stdin_empty_stderr.txt)
 assert_contains "$STDIN_DIR/stdin_empty_stdout.txt" "# Codebase Export"
@@ -300,29 +300,29 @@ fi
 assert_contains "$STDIN_DIR/stdin_long_null_without_mode_stderr.txt" "-0/--null requires --from-stdin"
 
 printf 'alpha.c\nalpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_dupe_stdout.txt 2>stdin_dupe_stderr.txt)
-assert_occurrences "$STDIN_DIR/stdin_dupe_stdout.txt" "## alpha\\.c" 1
+assert_occurrences "$STDIN_DIR/stdin_dupe_stdout.txt" "## alpha.c" 1
 
 printf 'alpha.c' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_unterminated_newline_stdout.txt 2>stdin_unterminated_newline_stderr.txt)
-assert_contains "$STDIN_DIR/stdin_unterminated_newline_stdout.txt" "## alpha\\.c"
+assert_contains "$STDIN_DIR/stdin_unterminated_newline_stdout.txt" "## alpha.c"
 
 printf 'alpha.c\0beta.c' | (cd "$STDIN_DIR" && "$BIN" --from-stdin -0 --no-tree -o - >stdin_unterminated_null_stdout.txt 2>stdin_unterminated_null_stderr.txt)
-assert_contains "$STDIN_DIR/stdin_unterminated_null_stdout.txt" "## alpha\\.c"
-assert_contains "$STDIN_DIR/stdin_unterminated_null_stdout.txt" "## beta\\.c"
+assert_contains "$STDIN_DIR/stdin_unterminated_null_stdout.txt" "## alpha.c"
+assert_contains "$STDIN_DIR/stdin_unterminated_null_stdout.txt" "## beta.c"
 
 printf 'file with spaces.txt\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_spaces_newline_stdout.txt 2>stdin_spaces_newline_stderr.txt)
-assert_contains "$STDIN_DIR/stdin_spaces_newline_stdout.txt" "## file with spaces\\.txt"
+assert_contains "$STDIN_DIR/stdin_spaces_newline_stdout.txt" "## file with spaces.txt"
 
 printf 'file with spaces.txt\0' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --null --no-tree -o - >stdin_spaces_null_stdout.txt 2>stdin_spaces_null_stderr.txt)
-assert_contains "$STDIN_DIR/stdin_spaces_null_stdout.txt" "## file with spaces\\.txt"
+assert_contains "$STDIN_DIR/stdin_spaces_null_stdout.txt" "## file with spaces.txt"
 
 printf 'beta.c\nalpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_order_stdout.txt 2>stdin_order_stderr.txt)
 first_heading=$(grep '^## ' "$STDIN_DIR/stdin_order_stdout.txt" | head -n 1)
-if [ "$first_heading" != "## alpha\\.c" ]; then
+if [ "$first_heading" != "## alpha.c" ]; then
     fail "expected sorted stdin output, got first heading '$first_heading'"
 fi
 
 printf 'ignored/keep.txt\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_ignore_bypass_stdout.txt 2>stdin_ignore_bypass_stderr.txt)
-assert_contains "$STDIN_DIR/stdin_ignore_bypass_stdout.txt" "## ignored/keep\\.txt"
+assert_contains "$STDIN_DIR/stdin_ignore_bypass_stdout.txt" "## ignored/keep.txt"
 
 NEGATE_DIR="$TMPDIR/negated_restore"
 mkdir -p "$NEGATE_DIR/build"
@@ -334,7 +334,7 @@ cat >"$NEGATE_DIR/build/keep.txt" <<'EOF_NEGATE_KEEP'
 restored
 EOF_NEGATE_KEEP
 (cd "$NEGATE_DIR" && "$BIN" --no-git -o - >negated_stdout.txt 2>negated_stderr.txt)
-assert_contains "$NEGATE_DIR/negated_stdout.txt" "## build/keep\\.txt"
+assert_contains "$NEGATE_DIR/negated_stdout.txt" "## build/keep.txt"
 
 REPO="$TMPDIR/repo"
 mkdir -p "$REPO/sub"
