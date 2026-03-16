@@ -1,4 +1,4 @@
-# fuoricode
+# Fuoricode
 
 A command-line tool that exports codebases into single Markdown artifacts optimized for LLM context and code review workflows. 
 ```bash
