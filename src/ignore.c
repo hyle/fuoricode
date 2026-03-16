@@ -372,7 +372,10 @@ int ignored_directory_may_have_included_descendants(const char* dirpath,
     return 0;
 }
 
-int load_ignore_patterns(const char* ignore_file, IgnorePattern** patterns, size_t* count) {
+int load_ignore_patterns(const char* ignore_file,
+                         int include_default_ignores,
+                         IgnorePattern** patterns,
+                         size_t* count) {
     const char* default_ignores[] = {
         ".git/",
         "node_modules/",
@@ -393,8 +396,10 @@ int load_ignore_patterns(const char* ignore_file, IgnorePattern** patterns, size
     };
 
     size_t default_count = 0;
-    while (default_ignores[default_count] != NULL) {
-        default_count++;
+    if (include_default_ignores) {
+        while (default_ignores[default_count] != NULL) {
+            default_count++;
+        }
     }
 
     size_t capacity = default_count + 16;

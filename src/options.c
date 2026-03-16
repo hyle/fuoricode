@@ -61,23 +61,24 @@ void print_usage(const char* argv0) {
     printf("  -V, --version       Show version information\n");
     printf("  -v, --verbose       Show progress information\n");
     printf("  -o, --output        Set output path (use '-' for stdout)\n");
-    printf("      --no-clobber    Fail if output file already exists\n");
-    printf("      --allow-sensitive Export files even if they match sensitive-file protection rules\n");
-    printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
-    printf("      --from-stdin    Read paths from stdin instead of using Git or filesystem selection\n");
     printf("      --staged        Export staged files from the current Git subtree\n");
     printf("      --unstaged      Export unstaged tracked files from the current Git subtree\n");
     printf("      --diff <r>      Export files changed by a git diff range (for example main...HEAD)\n");
+    printf("      --from-stdin    Read paths from stdin instead of using Git or filesystem selection\n");
     printf("                      --from-stdin, --staged, --unstaged, and --diff are mutually exclusive\n");
     printf("  -0, --null          Use NUL as the input record delimiter instead of newline (requires --from-stdin)\n");
+    printf("      --line-numbers  Prefix exported code lines with line numbers\n");
     printf("      --tree          Include a directory tree section (default)\n");
     printf("      --no-tree       Omit the directory tree section\n");
     printf("      --tree-depth    Limit tree rendering depth to N levels\n");
-    printf("      --line-numbers  Prefix exported code lines with line numbers\n");
     printf("  -s <size_kb>        Set maximum file size limit in KB (default: 100)\n");
     printf("      --warn-tokens   Warn if estimated tokens exceed N (default: %d)\n",
            DEFAULT_WARN_TOKENS);
     printf("      --max-tokens    Fail if estimated tokens exceed N\n");
+    printf("      --no-clobber    Fail if output file already exists\n");
+    printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
+    printf("      --no-default-ignore Disable built-in default ignore patterns in filesystem mode\n");
+    printf("      --allow-sensitive Export files even if they match sensitive-file protection rules\n");
 }
 
 int parse_cli_options(int argc, char* argv[], CliOptions* options) {
@@ -130,6 +131,8 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->output_is_stdout = (strcmp(options->output_path, "-") == 0);
         } else if (strcmp(argv[i], "--no-git") == 0) {
             force_no_git = 1;
+        } else if (strcmp(argv[i], "--no-default-ignore") == 0) {
+            options->no_default_ignore = 1;
         } else if (strcmp(argv[i], "--from-stdin") == 0) {
             if (options->requested_mode != FILE_SELECTION_AUTO) {
                 print_selection_mode_conflict();
