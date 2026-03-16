@@ -85,6 +85,25 @@ static const char* export_mode_label(FileSelectionMode mode) {
     }
 }
 
+static int should_render_change_context(FileSelectionMode mode) {
+    return mode == FILE_SELECTION_GIT_STAGED ||
+           mode == FILE_SELECTION_GIT_UNSTAGED ||
+           mode == FILE_SELECTION_GIT_DIFF;
+}
+
+static const char* change_type_label(SelectedPathChangeType change_type) {
+    switch (change_type) {
+        case SELECTED_PATH_CHANGE_ADDED:
+            return "A";
+        case SELECTED_PATH_CHANGE_RENAMED:
+            return "R";
+        case SELECTED_PATH_CHANGE_MODIFIED:
+        case SELECTED_PATH_CHANGE_NONE:
+        default:
+            return "M";
+    }
+}
+
 static size_t estimate_tokens(size_t byte_count) {
     return (byte_count / 7) * 2 + ((byte_count % 7) * 2) / 7;
 }
@@ -94,7 +113,7 @@ static int write_bytes(FILE* out, const void* data, size_t len) {
 }
 
 static int needs_markdown_escape(unsigned char c) {
-    static const char markdown_meta[] = "\\`*_[]";
+    static const char markdown_meta[] = "\\`*[]";
     return strchr(markdown_meta, c) != NULL;
 }
 
@@ -205,6 +224,65 @@ static int count_export_header_bytes(size_t* total,
     return 0;
 }
 
+static int count_change_context_bytes(size_t* total,
+                                      FileSelectionMode mode,
+                                      const SelectedPath* selected_paths,
+                                      size_t selected_count,
+                                      const char* diff_range) {
+    char count_buf[32];
+
+    if (!total) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!should_render_change_context(mode)) {
+        return 0;
+    }
+    if (snprintf(count_buf, sizeof(count_buf), "%zu", selected_count) < 0) {
+        return -1;
+    }
+
+    if (fuori_count_text_bytes(total, "## Change Context\n\n") != 0 ||
+        fuori_count_text_bytes(total, "Files changed: ") != 0 ||
+        fuori_count_text_bytes(total, count_buf) != 0 ||
+        fuori_count_text_bytes(total, "\n") != 0) {
+        return -1;
+    }
+    if (mode == FILE_SELECTION_GIT_DIFF &&
+        diff_range &&
+        *diff_range != '\0' &&
+        (fuori_count_text_bytes(total, "Diff range: ") != 0 ||
+         fuori_count_text_bytes(total, diff_range) != 0 ||
+         fuori_count_text_bytes(total, "\n") != 0)) {
+        return -1;
+    }
+    if (fuori_count_text_bytes(total, "\n") != 0) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < selected_count; i++) {
+        if (fuori_count_text_bytes(total, "- ") != 0 ||
+            fuori_count_text_bytes(total, change_type_label(selected_paths[i].change_type)) != 0 ||
+            fuori_count_text_bytes(total, " ") != 0) {
+            return -1;
+        }
+        if (selected_paths[i].change_type == SELECTED_PATH_CHANGE_RENAMED &&
+            selected_paths[i].previous_display_path &&
+            *selected_paths[i].previous_display_path != '\0') {
+            if (count_markdown_path_bytes(total, selected_paths[i].previous_display_path) != 0 ||
+                fuori_count_text_bytes(total, " -> ") != 0) {
+                return -1;
+            }
+        }
+        if (count_markdown_path_bytes(total, selected_paths[i].display_path) != 0 ||
+            fuori_count_text_bytes(total, "\n") != 0) {
+            return -1;
+        }
+    }
+
+    return fuori_count_text_bytes(total, "\n");
+}
+
 int write_export_header(FILE* out,
                         FileSelectionMode mode,
                         const char* repository,
@@ -229,6 +307,55 @@ int write_export_header(FILE* out,
     }
 
     return fuori_write_text(out, export_description(mode));
+}
+
+int write_change_context(FILE* out,
+                         FileSelectionMode mode,
+                         const SelectedPath* selected_paths,
+                         size_t selected_count,
+                         const char* diff_range) {
+    if (!out) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!should_render_change_context(mode)) {
+        return 0;
+    }
+
+    if (fprintf(out, "## Change Context\n\nFiles changed: %zu\n", selected_count) < 0) {
+        return -1;
+    }
+    if (mode == FILE_SELECTION_GIT_DIFF &&
+        diff_range &&
+        *diff_range != '\0' &&
+        fprintf(out, "Diff range: %s\n", diff_range) < 0) {
+        return -1;
+    }
+    if (fputc('\n', out) == EOF) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < selected_count; i++) {
+        if (fuori_write_text(out, "- ") != 0 ||
+            fuori_write_text(out, change_type_label(selected_paths[i].change_type)) != 0 ||
+            fuori_write_text(out, " ") != 0) {
+            return -1;
+        }
+        if (selected_paths[i].change_type == SELECTED_PATH_CHANGE_RENAMED &&
+            selected_paths[i].previous_display_path &&
+            *selected_paths[i].previous_display_path != '\0') {
+            if (write_markdown_path(out, selected_paths[i].previous_display_path) != 0 ||
+                fuori_write_text(out, " -> ") != 0) {
+                return -1;
+            }
+        }
+        if (write_markdown_path(out, selected_paths[i].display_path) != 0 ||
+            fuori_write_text(out, "\n") != 0) {
+            return -1;
+        }
+    }
+
+    return fuori_write_text(out, "\n");
 }
 
 static size_t compute_fence_length(const ExportEntry* entry) {
@@ -319,6 +446,9 @@ int calculate_export_metrics(const ExportPlan* plan,
                              FileSelectionMode mode,
                              const char* repository,
                              const char* generated_at,
+                             const SelectedPath* selected_paths,
+                             size_t selected_count,
+                             const char* diff_range,
                              int show_tree,
                              size_t tree_depth,
                              ExportMetrics* metrics) {
@@ -330,6 +460,9 @@ int calculate_export_metrics(const ExportPlan* plan,
     }
 
     if (count_export_header_bytes(&total, mode, repository, generated_at) != 0) {
+        return -1;
+    }
+    if (count_change_context_bytes(&total, mode, selected_paths, selected_count, diff_range) != 0) {
         return -1;
     }
 

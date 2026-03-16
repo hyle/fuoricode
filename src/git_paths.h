@@ -5,9 +5,18 @@
 
 #include "app.h"
 
+typedef enum {
+    SELECTED_PATH_CHANGE_NONE = 0,
+    SELECTED_PATH_CHANGE_ADDED,
+    SELECTED_PATH_CHANGE_MODIFIED,
+    SELECTED_PATH_CHANGE_RENAMED
+} SelectedPathChangeType;
+
 typedef struct {
     char* open_path;
     char* display_path;
+    SelectedPathChangeType change_type;
+    char* previous_display_path;
 } SelectedPath;
 
 typedef enum {

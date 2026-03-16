@@ -22,7 +22,16 @@ static int compare_selected_paths(const void* lhs, const void* rhs) {
     if (display_cmp != 0) {
         return display_cmp;
     }
-    return strcmp(left->open_path, right->open_path);
+    int open_cmp = strcmp(left->open_path, right->open_path);
+    if (open_cmp != 0) {
+        return open_cmp;
+    }
+    if (left->change_type != right->change_type) {
+        return (left->change_type < right->change_type) ? -1 : 1;
+    }
+    const char* left_previous = left->previous_display_path ? left->previous_display_path : "";
+    const char* right_previous = right->previous_display_path ? right->previous_display_path : "";
+    return strcmp(left_previous, right_previous);
 }
 
 void free_selected_paths(SelectedPath* paths, size_t count) {
@@ -30,6 +39,7 @@ void free_selected_paths(SelectedPath* paths, size_t count) {
     for (size_t i = 0; i < count; i++) {
         free(paths[i].open_path);
         free(paths[i].display_path);
+        free(paths[i].previous_display_path);
     }
     free(paths);
 }
@@ -49,17 +59,23 @@ static int normalize_selected_paths(SelectedPath* paths, size_t* count) {
         size_t unique_count = 1;
         for (size_t i = 1; i < *count; i++) {
             if (strcmp(paths[i - 1].open_path, paths[i].open_path) == 0 &&
-                strcmp(paths[i - 1].display_path, paths[i].display_path) == 0) {
+                strcmp(paths[i - 1].display_path, paths[i].display_path) == 0 &&
+                paths[i - 1].change_type == paths[i].change_type &&
+                strcmp(paths[i - 1].previous_display_path ? paths[i - 1].previous_display_path : "",
+                       paths[i].previous_display_path ? paths[i].previous_display_path : "") == 0) {
                 free(paths[i].open_path);
                 free(paths[i].display_path);
+                free(paths[i].previous_display_path);
                 paths[i].open_path = NULL;
                 paths[i].display_path = NULL;
+                paths[i].previous_display_path = NULL;
                 continue;
             }
             if (unique_count != i) {
                 paths[unique_count] = paths[i];
                 paths[i].open_path = NULL;
                 paths[i].display_path = NULL;
+                paths[i].previous_display_path = NULL;
             }
             unique_count++;
         }
@@ -288,11 +304,19 @@ static int append_selected_path(SelectedPath** paths,
                                 const char* prefix,
                                 size_t prefix_len,
                                 const char* repo_rel,
-                                size_t repo_rel_len) {
+                                size_t repo_rel_len,
+                                SelectedPathChangeType change_type,
+                                const char* previous_repo_rel) {
     const char* display_rel = repo_rel;
+    const char* previous_display_rel = previous_repo_rel;
     if (prefix_len > 0 &&
         strncmp(repo_rel, prefix, prefix_len) == 0) {
         display_rel = repo_rel + prefix_len;
+    }
+    if (previous_repo_rel &&
+        prefix_len > 0 &&
+        strncmp(previous_repo_rel, prefix, prefix_len) == 0) {
+        previous_display_rel = previous_repo_rel + prefix_len;
     }
 
     if (*count == *capacity) {
@@ -320,6 +344,19 @@ static int append_selected_path(SelectedPath** paths,
         free((*paths)[*count].open_path);
         (*paths)[*count].open_path = NULL;
         return -1;
+    }
+
+    (*paths)[*count].change_type = change_type;
+    (*paths)[*count].previous_display_path = NULL;
+    if (previous_display_rel) {
+        (*paths)[*count].previous_display_path = strdup(previous_display_rel);
+        if (!(*paths)[*count].previous_display_path) {
+            free((*paths)[*count].open_path);
+            free((*paths)[*count].display_path);
+            (*paths)[*count].open_path = NULL;
+            (*paths)[*count].display_path = NULL;
+            return -1;
+        }
     }
 
     (*count)++;
@@ -356,17 +393,19 @@ static int append_literal_selected_path(SelectedPath** paths,
     }
     memcpy((*paths)[*count].display_path, path, path_len);
     (*paths)[*count].display_path[path_len] = '\0';
+    (*paths)[*count].change_type = SELECTED_PATH_CHANGE_NONE;
+    (*paths)[*count].previous_display_path = NULL;
 
     (*count)++;
     return 0;
 }
 
-static int parse_selected_paths_output(const unsigned char* output,
-                                       size_t output_len,
-                                       const char* repo_root,
-                                       const char* prefix,
-                                       SelectedPath** paths_out,
-                                       size_t* count_out) {
+static int parse_name_only_output(const unsigned char* output,
+                                  size_t output_len,
+                                  const char* repo_root,
+                                  const char* prefix,
+                                  SelectedPath** paths_out,
+                                  size_t* count_out) {
     SelectedPath* paths = NULL;
     size_t count = 0;
     size_t capacity = 0;
@@ -390,12 +429,147 @@ static int parse_selected_paths_output(const unsigned char* output,
                                      prefix,
                                      prefix_len,
                                      repo_rel,
-                                     repo_rel_len) != 0) {
+                                     repo_rel_len,
+                                     SELECTED_PATH_CHANGE_NONE,
+                                     NULL) != 0) {
                 free_selected_paths(paths, count);
                 return -1;
             }
         }
         start = end + 1;
+    }
+
+    if (normalize_selected_paths(paths, &count) != 0) {
+        free_selected_paths(paths, count);
+        return -1;
+    }
+
+    *paths_out = paths;
+    *count_out = count;
+    return 0;
+}
+
+static SelectedPathChangeType parse_change_type(const char* status) {
+    if (!status || status[0] == '\0') {
+        return SELECTED_PATH_CHANGE_NONE;
+    }
+
+    switch (status[0]) {
+        case 'A':
+            return SELECTED_PATH_CHANGE_ADDED;
+        case 'R':
+            return SELECTED_PATH_CHANGE_RENAMED;
+        case 'M':
+        default:
+            return SELECTED_PATH_CHANGE_MODIFIED;
+    }
+}
+
+static int next_nul_terminated_field(const unsigned char* output,
+                                     size_t output_len,
+                                     size_t* start,
+                                     const char** field_out,
+                                     size_t* field_len_out) {
+    size_t end;
+
+    if (!output || !start || !field_out || !field_len_out || *start > output_len) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (*start == output_len) {
+        *field_out = NULL;
+        *field_len_out = 0;
+        return 0;
+    }
+
+    end = *start;
+    while (end < output_len && output[end] != '\0') {
+        end++;
+    }
+    if (end == output_len) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *field_out = (const char*)(output + *start);
+    *field_len_out = end - *start;
+    *start = end + 1;
+    return 1;
+}
+
+static int parse_name_status_output(const unsigned char* output,
+                                    size_t output_len,
+                                    const char* repo_root,
+                                    const char* prefix,
+                                    SelectedPath** paths_out,
+                                    size_t* count_out) {
+    SelectedPath* paths = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+    size_t start = 0;
+    size_t prefix_len = strlen(prefix);
+    size_t repo_root_len = strlen(repo_root);
+
+    while (start < output_len) {
+        const char* status = NULL;
+        const char* first_path = NULL;
+        const char* second_path = NULL;
+        size_t status_len = 0;
+        size_t first_path_len = 0;
+        size_t second_path_len = 0;
+        int field_status = next_nul_terminated_field(output, output_len, &start, &status, &status_len);
+        if (field_status <= 0) {
+            break;
+        }
+        if (status_len == 0) {
+            continue;
+        }
+        if (next_nul_terminated_field(output, output_len, &start, &first_path, &first_path_len) <= 0 ||
+            first_path_len == 0) {
+            free_selected_paths(paths, count);
+            errno = EINVAL;
+            return -1;
+        }
+
+        SelectedPathChangeType change_type = parse_change_type(status);
+        if (change_type == SELECTED_PATH_CHANGE_RENAMED) {
+            if (next_nul_terminated_field(output, output_len, &start, &second_path, &second_path_len) <= 0 ||
+                second_path_len == 0) {
+                free_selected_paths(paths, count);
+                errno = EINVAL;
+                return -1;
+            }
+            if (append_selected_path(&paths,
+                                     &count,
+                                     &capacity,
+                                     repo_root,
+                                     repo_root_len,
+                                     prefix,
+                                     prefix_len,
+                                     second_path,
+                                     second_path_len,
+                                     change_type,
+                                     first_path) != 0) {
+                free_selected_paths(paths, count);
+                return -1;
+            }
+            continue;
+        }
+
+        if (append_selected_path(&paths,
+                                 &count,
+                                 &capacity,
+                                 repo_root,
+                                 repo_root_len,
+                                 prefix,
+                                 prefix_len,
+                                 first_path,
+                                 first_path_len,
+                                 change_type,
+                                 NULL) != 0) {
+            free_selected_paths(paths, count);
+            return -1;
+        }
     }
 
     if (normalize_selected_paths(paths, &count) != 0) {
@@ -526,7 +700,7 @@ int collect_git_paths(FileSelectionMode mode,
         if (mode == FILE_SELECTION_GIT_STAGED) {
             args[argc++] = "--cached";
         }
-        args[argc++] = "--name-only";
+        args[argc++] = "--name-status";
         args[argc++] = diff_filter;
         if (mode == FILE_SELECTION_GIT_DIFF) {
             args[argc++] = diff_range;
@@ -554,7 +728,9 @@ int collect_git_paths(FileSelectionMode mode,
         goto cleanup;
     }
 
-    if (parse_selected_paths_output(output, output_len, repo_root, prefix, &paths, &parsed_count) != 0) {
+    if ((mode == FILE_SELECTION_GIT_WORKTREE
+            ? parse_name_only_output(output, output_len, repo_root, prefix, &paths, &parsed_count)
+            : parse_name_status_output(output, output_len, repo_root, prefix, &paths, &parsed_count)) != 0) {
         goto cleanup;
     }
 
