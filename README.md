@@ -92,6 +92,7 @@ fuori [OPTIONS]
 | `-v`, `--verbose` | Show progress during export |
 | `-o`, `--output <path>` | Output path (`-` for stdout) |
 | `--no-clobber` | Fail if output already exists |
+| `--allow-sensitive` | Export files even if they match sensitive-file protection rules |
 | `--no-git` | Force filesystem selection |
 | `--from-stdin` | Read paths from stdin |
 | `--staged` | Export staged files |
@@ -120,6 +121,7 @@ fuori -s 50                        # 50 KB file size cap
 fuori --warn-tokens 100000         # Earlier token warning
 fuori --max-tokens 270000          # Hard token budget
 fuori -o out.md --no-clobber       # Refuse to overwrite
+fuori --allow-sensitive            # Export files that secret protection would skip
 ```
 
 ## Ignore Rules
@@ -151,6 +153,20 @@ To export paths that match the default list, use `--from-stdin`.
 
 Files larger than the specified size limit (default 100KB) are automatically excluded from the export to prevent including large binary or data files. You can change this limit using the `-s` option.
 
+## Sensitive File Protection
+
+By default, `fuori` skips files that look obviously sensitive and prints a warning to `stderr`.
+This protection applies in every selection mode, including Git-backed modes and `--from-stdin`.
+
+v1 checks:
+
+- high-risk filenames such as `.env*`, `credentials*`, `secret*`, `id_rsa*`, `*.pem`, and `*.key`
+- obvious content patterns such as private key blocks and a small set of API key prefixes
+
+Sensitive files are omitted entirely from the Markdown output. In `--staged`, `--unstaged`, and `--diff` mode they are also omitted from `Change Context`.
+
+Use `--allow-sensitive` to disable this protection for a run.
+
 ## Git File Selection
 
 By default, `fuori` asks Git for tracked files plus untracked non-ignored files in the current subtree.
@@ -168,7 +184,7 @@ Additional semantics:
 
 - The default Git-backed mode and explicit Git file-selection modes are scoped to the current working directory subtree when run from a Git subdirectory
 - Git-selected files bypass bypass ignore rules at selection time
-- Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
+- Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, sensitive-file protection, and output-file self-exclusion
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
 - `--staged`, `--unstaged`, and `--diff` include a `Change Context` section with change status summaries
@@ -190,7 +206,7 @@ git ls-files -z -- src/ | fuori --from-stdin -0
 Semantics:
 
 - stdin-selected paths bypass selection-time ignore rules
-- they still go through export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, and output-file self-exclusion
+- they still go through export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, sensitive-file protection, and output-file self-exclusion
 - `--from-stdin` is mutually exclusive with `--staged`, `--unstaged`, `--diff`, and `--no-git`
 - `-0` / `--null` requires `--from-stdin`
 - empty stdin is a successful no-op export that still emits the export preamble
@@ -224,6 +240,7 @@ In practice, that means files with NUL bytes, invalid UTF-8, or too many control
 Empty files are skipped.
 Symbolic links are skipped to avoid recursion cycles.
 UTF-16 and other non-UTF-8 text encodings are currently treated as non-exportable and skipped.
+Sensitive files are skipped by default unless `--allow-sensitive` is set.
 
 ## Output Format
 

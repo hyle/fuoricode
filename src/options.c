@@ -62,6 +62,7 @@ void print_usage(const char* argv0) {
     printf("  -v, --verbose       Show progress information\n");
     printf("  -o, --output        Set output path (use '-' for stdout)\n");
     printf("      --no-clobber    Fail if output file already exists\n");
+    printf("      --allow-sensitive Export files even if they match sensitive-file protection rules\n");
     printf("      --no-git        Force recursive filesystem selection instead of auto Git detection\n");
     printf("      --from-stdin    Read paths from stdin instead of using Git or filesystem selection\n");
     printf("      --staged        Export staged files from the current Git subtree\n");
@@ -138,6 +139,8 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->stdin_null_delim = 1;
         } else if (strcmp(argv[i], "--no-clobber") == 0) {
             options->no_clobber = 1;
+        } else if (strcmp(argv[i], "--allow-sensitive") == 0) {
+            options->allow_sensitive = 1;
         } else if (strcmp(argv[i], "--tree") == 0) {
             options->show_tree = 1;
         } else if (strcmp(argv[i], "--no-tree") == 0) {

@@ -86,6 +86,7 @@ static void print_verbose_skip_summary(const AppContext* ctx) {
     char large_buf[32];
     char ignored_buf[32];
     char symlink_buf[32];
+    char sensitive_buf[32];
 
     if (!ctx || !ctx->verbose) {
         return;
@@ -94,22 +95,25 @@ static void print_verbose_skip_summary(const AppContext* ctx) {
     if (format_size_with_commas(ctx->skipped_binary, binary_buf, sizeof(binary_buf)) != 0 ||
         format_size_with_commas(ctx->skipped_too_large, large_buf, sizeof(large_buf)) != 0 ||
         format_size_with_commas(ctx->skipped_ignored, ignored_buf, sizeof(ignored_buf)) != 0 ||
-        format_size_with_commas(ctx->skipped_symlink, symlink_buf, sizeof(symlink_buf)) != 0) {
+        format_size_with_commas(ctx->skipped_symlink, symlink_buf, sizeof(symlink_buf)) != 0 ||
+        format_size_with_commas(ctx->skipped_sensitive, sensitive_buf, sizeof(sensitive_buf)) != 0) {
         fprintf(stderr,
-                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu\n",
+                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu, sensitive=%zu\n",
                 ctx->skipped_binary,
                 ctx->skipped_too_large,
                 ctx->skipped_ignored,
-                ctx->skipped_symlink);
+                ctx->skipped_symlink,
+                ctx->skipped_sensitive);
         return;
     }
 
     fprintf(stderr,
-            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s\n",
+            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s, sensitive=%s\n",
             binary_buf,
             large_buf,
             ignored_buf,
-            symlink_buf);
+            symlink_buf,
+            sensitive_buf);
 }
 
 static int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size) {
@@ -170,6 +174,65 @@ static int format_generated_timestamp(char* buffer, size_t buffer_size) {
     return 0;
 }
 
+static const char* normalize_display_path(const char* path) {
+    if (path && strncmp(path, "./", 2) == 0) {
+        return path + 2;
+    }
+    return path;
+}
+
+static int export_plan_contains_selected_path(const ExportPlan* plan, const SelectedPath* selected_path) {
+    const char* selected_display;
+
+    if (!plan || !selected_path) {
+        return 0;
+    }
+    selected_display = normalize_display_path(selected_path->display_path);
+
+    for (size_t i = 0; i < plan->count; i++) {
+        const ExportEntry* entry = &plan->entries[i];
+        if (strcmp(entry->open_path, selected_path->open_path) == 0 &&
+            strcmp(entry->display_path, selected_display ? selected_display : selected_path->open_path) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void compact_selected_paths_to_export_plan(SelectedPath* selected_paths,
+                                                  size_t* selected_count,
+                                                  const ExportPlan* plan) {
+    size_t write_index = 0;
+
+    if (!selected_count || !selected_paths || !plan) {
+        return;
+    }
+
+    for (size_t read_index = 0; read_index < *selected_count; read_index++) {
+        SelectedPath* path = &selected_paths[read_index];
+        if (export_plan_contains_selected_path(plan, path)) {
+            if (write_index != read_index) {
+                selected_paths[write_index] = *path;
+                path->open_path = NULL;
+                path->display_path = NULL;
+                path->previous_display_path = NULL;
+            }
+            write_index++;
+            continue;
+        }
+
+        free(path->open_path);
+        free(path->display_path);
+        free(path->previous_display_path);
+        path->open_path = NULL;
+        path->display_path = NULL;
+        path->previous_display_path = NULL;
+    }
+
+    *selected_count = write_index;
+}
+
 int main(int argc, char* argv[]) {
     CliOptions options;
     AppContext ctx = {0};
@@ -206,6 +269,7 @@ int main(int argc, char* argv[]) {
     ctx.no_clobber = options.no_clobber;
     ctx.output_is_stdout = options.output_is_stdout;
     ctx.show_tree = options.show_tree;
+    ctx.allow_sensitive = options.allow_sensitive;
     ctx.max_file_size = options.max_file_size;
     ctx.tree_depth = options.tree_depth;
     ctx.warn_tokens = options.warn_tokens;
@@ -248,6 +312,7 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "Error collecting selected files\n");
             goto cleanup;
         }
+        compact_selected_paths_to_export_plan(selected_paths, &selected_count, &plan);
     }
 
     if (prepare_render_plan(&plan, &render_info) != 0) {

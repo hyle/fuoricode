@@ -12,6 +12,7 @@ typedef struct {
     int output_is_stdout;
     int stdin_null_delim;
     int show_tree;
+    int allow_sensitive;
     size_t max_file_size;
     size_t tree_depth;
     size_t warn_tokens;
