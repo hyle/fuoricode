@@ -100,6 +100,7 @@ fuori [OPTIONS]
 | `--diff <range>` | Export files changed in a diff range |
 | `--tree` / `--no-tree` | Include/omit project tree (default: on) |
 | `--tree-depth <n>` | Limit tree render depth |
+| `--line-numbers` | Prefix exported code lines with line numbers |
 | `-s <size_kb>` | Max file size in KB (default: 100) |
 | `--warn-tokens <n>` | Warn above token threshold (default: 200k) |
 | `--max-tokens <n>` | Hard-fail above token threshold |
@@ -117,6 +118,7 @@ fuori --diff main...HEAD           # Changes since branching from main
 fuori -o - > codebase.md           # Pipe to stdout
 fuori --no-tree                    # Skip the project tree section
 fuori --tree-depth 2               # Shallow tree
+fuori --line-numbers --staged      # Add line numbers for review-oriented exports
 fuori -s 50                        # 50 KB file size cap
 fuori --warn-tokens 100000         # Earlier token warning
 fuori --max-tokens 270000          # Hard token budget
@@ -183,7 +185,7 @@ Use `--no-git` to force the filesystem walker explicitly.
 Additional semantics:
 
 - The default Git-backed mode and explicit Git file-selection modes are scoped to the current working directory subtree when run from a Git subdirectory
-- Git-selected files bypass bypass ignore rules at selection time
+- Git-selected files bypass ignore rules at selection time
 - Git-selected files still go through normal export-time checks such as regular-file validation, symlink skipping, binary detection, size limits, sensitive-file protection, and output-file self-exclusion
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
@@ -246,13 +248,14 @@ Sensitive files are skipped by default unless `--allow-sensitive` is set.
 
 The output markdown file will contain:
 
-1. A preamble with repository, mode, and generation timestamp metadata plus a short mode description
+1. A preamble with repository, mode, and generation timestamp metadata, plus `Line numbers: on` when enabled, and a short mode description
 2. A `Change Context` section for `--staged`, `--unstaged`, and `--diff` exports
 3. A project tree section that reflects the exported artifact (enabled by default)
 4. A header with the file path
 5. A code block with the file content
-6. Appropriate language identifiers for syntax highlighting
-7. A `stderr` summary of files, bytes, and estimated tokens after successful completion
+6. Optional line-number prefixes inside code blocks when `--line-numbers` is set
+7. Appropriate language identifiers for syntax highlighting
+8. A `stderr` summary of files, bytes, and estimated tokens after successful completion
 
 Example file contents excerpt (the `Makefile` section is omitted for brevity):
 ````markdown
@@ -261,6 +264,7 @@ Example file contents excerpt (the `Makefile` section is omitted for brevity):
 Repository: my-project
 Mode: recursive
 Generated: 2026-03-16T12:34:56Z
+Line numbers: on
 
 This document contains all the source code files from the current directory subtree.
 
@@ -275,11 +279,11 @@ This document contains all the source code files from the current directory subt
 ## src/main.c
 
 ```c
-#include <stdio.h>
-
-int main() {
-    printf("Hello, World!\n");
-    return 0;
-}
+1 | #include <stdio.h>
+2 | 
+3 | int main() {
+4 |     printf("Hello, World!\n");
+5 |     return 0;
+6 | }
 ```
 ````

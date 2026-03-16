@@ -114,10 +114,6 @@ static size_t estimate_tokens(size_t byte_count) {
     return (byte_count / 7) * 2 + ((byte_count % 7) * 2) / 7;
 }
 
-static int write_bytes(FILE* out, const void* data, size_t len) {
-    return (fwrite(data, 1, len, out) == len) ? 0 : -1;
-}
-
 static int needs_markdown_escape(unsigned char c) {
     static const char markdown_meta[] = "\\`*[]";
     return strchr(markdown_meta, c) != NULL;
@@ -148,6 +144,21 @@ static int sink_write_char(RenderSink* sink, char c) {
     }
     if (sink->total) {
         return add_size(sink->total, 1);
+    }
+    errno = EINVAL;
+    return -1;
+}
+
+static int sink_write_bytes(RenderSink* sink, const void* data, size_t len) {
+    if (!sink || (!data && len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (sink->out) {
+        return (fwrite(data, 1, len, sink->out) == len) ? 0 : -1;
+    }
+    if (sink->total) {
+        return add_size(sink->total, len);
     }
     errno = EINVAL;
     return -1;
@@ -194,16 +205,6 @@ static int emit_markdown_path(RenderSink* sink, const char* path) {
     return 0;
 }
 
-static int write_markdown_path(FILE* out, const char* path) {
-    RenderSink sink = {.out = out, .total = NULL};
-    return emit_markdown_path(&sink, path);
-}
-
-static int count_markdown_path_bytes(size_t* total, const char* path) {
-    RenderSink sink = {.out = NULL, .total = total};
-    return emit_markdown_path(&sink, path);
-}
-
 static int count_fence_bytes(size_t* total, size_t count, const char* lang) {
     if (add_size(total, count) != 0) return -1;
     if (lang && *lang && add_size(total, strlen(lang)) != 0) return -1;
@@ -230,6 +231,53 @@ static int format_size_value(size_t value, char* buffer, size_t buffer_size) {
     return 0;
 }
 
+static size_t decimal_digit_count(size_t value) {
+    size_t digits = 1;
+
+    while (value >= 10) {
+        value /= 10;
+        digits++;
+    }
+
+    return digits;
+}
+
+static size_t entry_line_count(const ExportEntry* entry) {
+    size_t count = 0;
+
+    if (!entry || entry->buf_len == 0) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < entry->buf_len; i++) {
+        if (entry->buf[i] == '\n') {
+            count++;
+        }
+    }
+
+    if (entry->buf[entry->buf_len - 1] != '\n') {
+        count++;
+    }
+
+    return count;
+}
+
+static int emit_line_number_prefix(RenderSink* sink, size_t line_no, size_t width) {
+    char number_buf[32];
+    size_t digits = decimal_digit_count(line_no);
+
+    if (format_size_value(line_no, number_buf, sizeof(number_buf)) != 0) {
+        return -1;
+    }
+    while (digits < width) {
+        if (sink_write_char(sink, ' ') != 0) {
+            return -1;
+        }
+        digits++;
+    }
+    return sink_write_text(sink, number_buf);
+}
+
 static int emit_export_header(RenderSink* sink, const ExportRenderContext* ctx) {
     if (!sink || !ctx || !ctx->repository || !ctx->generated_at) {
         errno = EINVAL;
@@ -242,8 +290,16 @@ static int emit_export_header(RenderSink* sink, const ExportRenderContext* ctx) 
         sink_write_text(sink, "\nMode: ") != 0 ||
         sink_write_text(sink, export_mode_label(ctx->mode)) != 0 ||
         sink_write_text(sink, "\nGenerated: ") != 0 ||
-        sink_write_text(sink, ctx->generated_at) != 0 ||
-        sink_write_text(sink, "\n\n") != 0 ||
+        sink_write_text(sink, ctx->generated_at) != 0) {
+        return -1;
+    }
+
+    if (ctx->show_line_numbers &&
+        (sink_write_text(sink, "\nLine numbers: on") != 0)) {
+        return -1;
+    }
+
+    if (sink_write_text(sink, "\n\n") != 0 ||
         sink_write_text(sink, export_description(ctx->mode)) != 0) {
         return -1;
     }
@@ -380,22 +436,81 @@ static int get_fence_length(const RenderPlanInfo* info, size_t index, size_t* fe
     return 0;
 }
 
-static int count_entry_bytes(const ExportEntry* entry, size_t fence, size_t* total) {
-    if (fuori_count_text_bytes(total, "## ") != 0 ||
-        count_markdown_path_bytes(total, entry->display_path) != 0 ||
-        fuori_count_text_bytes(total, "\n\n") != 0 ||
-        count_fence_bytes(total, fence, entry->lang) != 0 ||
-        add_size(total, entry->buf_len) != 0) {
+static int emit_entry_body(RenderSink* sink, const ExportEntry* entry, int show_line_numbers) {
+    size_t line_count = 0;
+    size_t width = 0;
+    size_t line_no = 1;
+    size_t line_start = 0;
+
+    if (!sink || !entry) {
+        errno = EINVAL;
         return -1;
     }
-    if (entry->buf_len > 0 && entry->buf[entry->buf_len - 1] != '\n' &&
-        add_size(total, 1) != 0) {
+
+    if (!show_line_numbers) {
+        if (entry->buf_len > 0 && sink_write_bytes(sink, entry->buf, entry->buf_len) != 0) {
+            return -1;
+        }
+        if (entry->buf_len > 0 &&
+            entry->buf[entry->buf_len - 1] != '\n' &&
+            sink_write_char(sink, '\n') != 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    line_count = entry_line_count(entry);
+    if (line_count == 0) {
+        return 0;
+    }
+    width = decimal_digit_count(line_count);
+
+    for (size_t i = 0; i < entry->buf_len; i++) {
+        if (entry->buf[i] != '\n') {
+            continue;
+        }
+        if (emit_line_number_prefix(sink, line_no, width) != 0 ||
+            sink_write_text(sink, " | ") != 0 ||
+            sink_write_bytes(sink, entry->buf + line_start, (i - line_start) + 1) != 0) {
+            return -1;
+        }
+        line_no++;
+        line_start = i + 1;
+    }
+
+    if (line_start < entry->buf_len) {
+        if (emit_line_number_prefix(sink, line_no, width) != 0 ||
+            sink_write_text(sink, " | ") != 0 ||
+            sink_write_bytes(sink, entry->buf + line_start, entry->buf_len - line_start) != 0 ||
+            sink_write_char(sink, '\n') != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int emit_entry(RenderSink* sink,
+                      const ExportEntry* entry,
+                      size_t fence,
+                      const ExportRenderContext* ctx) {
+    if (!sink || !entry || !ctx) {
+        errno = EINVAL;
         return -1;
     }
-    if (count_fence_bytes(total, fence, NULL) != 0 ||
-        fuori_count_text_bytes(total, "\n\n") != 0) {
+
+    if (sink_write_text(sink, "## ") != 0 ||
+        emit_markdown_path(sink, entry->display_path) != 0 ||
+        sink_write_text(sink, "\n\n") != 0 ||
+        (sink->out ? write_fence(sink->out, fence, entry->lang)
+                   : count_fence_bytes(sink->total, fence, entry->lang)) != 0 ||
+        emit_entry_body(sink, entry, ctx->show_line_numbers) != 0 ||
+        (sink->out ? write_fence(sink->out, fence, NULL)
+                   : count_fence_bytes(sink->total, fence, NULL)) != 0 ||
+        sink_write_text(sink, "\n\n") != 0) {
         return -1;
     }
+
     return 0;
 }
 
@@ -425,7 +540,7 @@ int calculate_export_metrics(const ExportPlan* plan,
     for (size_t i = 0; i < plan->count; i++) {
         size_t fence = 0;
         if (get_fence_length(info, i, &fence) != 0 ||
-            count_entry_bytes(&plan->entries[i], fence, &total) != 0) {
+            emit_entry(&sink, &plan->entries[i], fence, ctx) != 0) {
             return -1;
         }
     }
@@ -436,30 +551,14 @@ int calculate_export_metrics(const ExportPlan* plan,
     return 0;
 }
 
-static int render_entry(FILE* out, const ExportEntry* entry, size_t fence) {
-    if (fuori_write_text(out, "## ") != 0 ||
-        write_markdown_path(out, entry->display_path) != 0 ||
-        fuori_write_text(out, "\n\n") != 0) {
-        return -1;
-    }
-    if (write_fence(out, fence, entry->lang) != 0) {
-        return -1;
-    }
-    if (entry->buf_len > 0 && write_bytes(out, entry->buf, entry->buf_len) != 0) {
-        return -1;
-    }
-    if (entry->buf_len > 0 && entry->buf[entry->buf_len - 1] != '\n' && fuori_write_text(out, "\n") != 0) {
-        return -1;
-    }
-    if (write_fence(out, fence, NULL) != 0 ||
-        fuori_write_text(out, "\n\n") != 0) {
-        return -1;
-    }
-    return 0;
-}
+int render_export_plan(FILE* out,
+                       const ExportPlan* plan,
+                       const RenderPlanInfo* info,
+                       const ExportRenderContext* ctx,
+                       int verbose) {
+    RenderSink sink = {.out = out, .total = NULL};
 
-int render_export_plan(FILE* out, const ExportPlan* plan, const RenderPlanInfo* info, int verbose) {
-    if (!plan || !info || info->count != plan->count) {
+    if (!plan || !info || !ctx || info->count != plan->count) {
         errno = EINVAL;
         return -1;
     }
@@ -475,7 +574,7 @@ int render_export_plan(FILE* out, const ExportPlan* plan, const RenderPlanInfo* 
         }
 #endif
         if (get_fence_length(info, i, &fence) != 0 ||
-            render_entry(out, &plan->entries[i], fence) != 0) {
+            emit_entry(&sink, &plan->entries[i], fence, ctx) != 0) {
             return -1;
         }
     }
