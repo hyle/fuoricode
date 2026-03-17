@@ -142,13 +142,37 @@ EOF_SENSITIVE_NAME_MAIN
 cat >"$SENSITIVE_NAME_DIR/credentials.txt" <<'EOF_SENSITIVE_NAME_SECRET'
 plain text but sensitive by filename
 EOF_SENSITIVE_NAME_SECRET
+cat >"$SENSITIVE_NAME_DIR/.envrc" <<'EOF_SENSITIVE_NAME_ENVRC'
+export TOKEN=1
+EOF_SENSITIVE_NAME_ENVRC
+cat >"$SENSITIVE_NAME_DIR/credentials-prod.txt" <<'EOF_SENSITIVE_NAME_CREDENTIALS_DASH'
+prod credentials
+EOF_SENSITIVE_NAME_CREDENTIALS_DASH
+cat >"$SENSITIVE_NAME_DIR/secret_backup" <<'EOF_SENSITIVE_NAME_SECRET_BACKUP'
+backup secret
+EOF_SENSITIVE_NAME_SECRET_BACKUP
+cat >"$SENSITIVE_NAME_DIR/id_rsa_backup" <<'EOF_SENSITIVE_NAME_ID_RSA_BACKUP'
+backup ssh key
+EOF_SENSITIVE_NAME_ID_RSA_BACKUP
 (cd "$SENSITIVE_NAME_DIR" && "$BIN" --no-git -o - >sensitive_name_stdout.txt 2>"$TMPDIR/sensitive_name_stderr.txt")
 assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## main.c"
 assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "credentials.txt"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" ".envrc"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "credentials-prod.txt"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "secret_backup"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "id_rsa_backup"
 assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials.txt"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./.envrc"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials-prod.txt"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./secret_backup"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./id_rsa_backup"
 
 (cd "$SENSITIVE_NAME_DIR" && "$BIN" --no-git --allow-sensitive -o - >sensitive_name_allow_stdout.txt 2>"$TMPDIR/sensitive_name_allow_stderr.txt")
 assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## credentials.txt"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## .envrc"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## credentials-prod.txt"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## secret_backup"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## id_rsa_backup"
 assert_not_contains "$TMPDIR/sensitive_name_allow_stderr.txt" "Warning: Skipping sensitive file"
 
 SENSITIVE_CONTENT_DIR="$TMPDIR/sensitive_content"
@@ -252,6 +276,23 @@ if [ "$(id -u)" -ne 0 ]; then
     assert_contains "$PERM_DIR/permission_stdout.txt" "## main.c"
     assert_not_contains "$PERM_DIR/permission_stdout.txt" "private.txt"
     assert_contains "$PERM_DIR/permission_stderr.txt" "Warning: Failed to process file ./private.txt"
+fi
+
+UNREADABLE_DIR="$TMPDIR/unreadable_directory"
+mkdir -p "$UNREADABLE_DIR/blocked"
+cat >"$UNREADABLE_DIR/main.c" <<'EOF_UNREADABLE_DIR_MAIN'
+int main(void) { return 0; }
+EOF_UNREADABLE_DIR_MAIN
+cat >"$UNREADABLE_DIR/blocked/hidden.c" <<'EOF_UNREADABLE_DIR_HIDDEN'
+int hidden(void) { return 0; }
+EOF_UNREADABLE_DIR_HIDDEN
+if [ "$(id -u)" -ne 0 ]; then
+    chmod 000 "$UNREADABLE_DIR/blocked"
+    (cd "$UNREADABLE_DIR" && "$BIN" --no-git --no-tree -o - >unreadable_dir_stdout.txt 2>unreadable_dir_stderr.txt)
+    chmod 700 "$UNREADABLE_DIR/blocked"
+    assert_contains "$UNREADABLE_DIR/unreadable_dir_stdout.txt" "## main.c"
+    assert_not_contains "$UNREADABLE_DIR/unreadable_dir_stdout.txt" "hidden.c"
+    assert_contains "$UNREADABLE_DIR/unreadable_dir_stderr.txt" "Warning: Failed to process directory ./blocked"
 fi
 
 ODD_DIR="$TMPDIR/odd_paths"
@@ -402,6 +443,12 @@ assert_contains "$STDIN_DIR/stdin_spaces_newline_stdout.txt" "## file with space
 
 printf 'file with spaces.txt\0' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --null --no-tree -o - >stdin_spaces_null_stdout.txt 2>stdin_spaces_null_stderr.txt)
 assert_contains "$STDIN_DIR/stdin_spaces_null_stdout.txt" "## file with spaces.txt"
+
+ABS_STDIN_PATH=$(cd "$STDIN_DIR" && pwd)/alpha.c
+printf '%s\n' "$ABS_STDIN_PATH" | (cd "$STDIN_DIR" && "$BIN" --from-stdin -o - >stdin_absolute_stdout.txt 2>stdin_absolute_stderr.txt)
+assert_contains "$STDIN_DIR/stdin_absolute_stdout.txt" "## $ABS_STDIN_PATH"
+assert_contains "$STDIN_DIR/stdin_absolute_stdout.txt" "└── /"
+assert_contains "$STDIN_DIR/stdin_absolute_stdout.txt" "└── alpha.c"
 
 printf 'beta.c\nalpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-tree -o - >stdin_order_stdout.txt 2>stdin_order_stderr.txt)
 first_heading=$(grep '^## ' "$STDIN_DIR/stdin_order_stdout.txt" | head -n 1)

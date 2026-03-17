@@ -188,6 +188,39 @@ static int tree_add_path(TreeNode* root, const char* display_path) {
     }
 
     TreeNode* current = root;
+    if (display_path[0] == '/') {
+        TreeNode* absolute_root = NULL;
+
+        for (size_t i = 0; i < current->child_count; i++) {
+            if (strcmp(current->children[i]->name, "/") == 0) {
+                absolute_root = current->children[i];
+                break;
+            }
+        }
+
+        if (!absolute_root) {
+            if (current->child_count == current->child_capacity) {
+                size_t new_capacity = (current->child_capacity == 0) ? 8 : current->child_capacity * 2;
+                TreeNode** new_children = realloc(current->children, new_capacity * sizeof(*new_children));
+                if (!new_children) {
+                    free(path_copy);
+                    return -1;
+                }
+                current->children = new_children;
+                current->child_capacity = new_capacity;
+            }
+
+            absolute_root = tree_node_create("/", 1);
+            if (!absolute_root) {
+                free(path_copy);
+                return -1;
+            }
+            current->children[current->child_count++] = absolute_root;
+        }
+
+        current = absolute_root;
+    }
+
     char* saveptr = NULL;
     char* token = strtok_r(path_copy, "/", &saveptr);
     while (token) {
