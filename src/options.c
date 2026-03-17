@@ -7,35 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int parse_positive_size_value(const char* value,
-                                     const char* label,
-                                     size_t max_value,
-                                     size_t* out) {
-    char* endptr;
-    unsigned long long parsed;
-
-    if (!value || !out) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    errno = 0;
-    parsed = strtoull(value, &endptr, 10);
-    if (*value == '\0' || *endptr != '\0' || parsed == 0 ||
-        errno == ERANGE || parsed > max_value) {
-        fprintf(stderr, "Invalid %s value: %s\n", label, value);
-        fprintf(stderr, "Use -h or --help for usage information\n");
-        return -1;
-    }
-
-    *out = (size_t)parsed;
-    return 0;
-}
-
-static int parse_nonnegative_size_value(const char* value,
-                                        const char* label,
-                                        size_t max_value,
-                                        size_t* out) {
+static int parse_size_value(const char* value,
+                            const char* label,
+                            size_t min_value,
+                            size_t max_value,
+                            size_t* out) {
     char* endptr;
     unsigned long long parsed;
 
@@ -51,7 +27,7 @@ static int parse_nonnegative_size_value(const char* value,
 
     errno = 0;
     parsed = strtoull(value, &endptr, 10);
-    if (*value == '\0' || *endptr != '\0' ||
+    if (*value == '\0' || *endptr != '\0' || parsed < min_value ||
         errno == ERANGE || parsed > max_value) {
         fprintf(stderr, "Invalid %s value: %s\n", label, value);
         fprintf(stderr, "Use -h or --help for usage information\n");
@@ -142,7 +118,7 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
         } else if (strcmp(argv[i], "-s") == 0) {
             if (i + 1 < argc) {
                 size_t size_kb;
-                if (parse_positive_size_value(argv[++i], "size", SIZE_MAX / 1024ULL, &size_kb) != 0) {
+                if (parse_size_value(argv[++i], "size", 1, SIZE_MAX / 1024ULL, &size_kb) != 0) {
                     return -1;
                 }
                 options->max_file_size = size_kb * 1024ULL;
@@ -197,24 +173,26 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->show_hunks = 1;
             options->hunk_context_lines = 3;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
-                if (parse_nonnegative_size_value(argv[++i],
-                                                 "hunk context",
-                                                 SIZE_MAX,
-                                                 &options->hunk_context_lines) != 0) {
+                if (parse_size_value(argv[++i],
+                                     "hunk context",
+                                     0,
+                                     SIZE_MAX,
+                                     &options->hunk_context_lines) != 0) {
                     return -1;
                 }
             }
         } else if (strncmp(argv[i], "--hunks=", 8) == 0) {
             options->show_hunks = 1;
-            if (parse_nonnegative_size_value(argv[i] + 8,
-                                             "hunk context",
-                                             SIZE_MAX,
-                                             &options->hunk_context_lines) != 0) {
+            if (parse_size_value(argv[i] + 8,
+                                 "hunk context",
+                                 0,
+                                 SIZE_MAX,
+                                 &options->hunk_context_lines) != 0) {
                 return -1;
             }
         } else if (strcmp(argv[i], "--tree-depth") == 0) {
             if (i + 1 < argc) {
-                if (parse_positive_size_value(argv[++i], "tree depth", SIZE_MAX, &options->tree_depth) != 0) {
+                if (parse_size_value(argv[++i], "tree depth", 1, SIZE_MAX, &options->tree_depth) != 0) {
                     return -1;
                 }
             } else {
@@ -223,12 +201,12 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
                 return -1;
             }
         } else if (strncmp(argv[i], "--tree-depth=", 13) == 0) {
-            if (parse_positive_size_value(argv[i] + 13, "tree depth", SIZE_MAX, &options->tree_depth) != 0) {
+            if (parse_size_value(argv[i] + 13, "tree depth", 1, SIZE_MAX, &options->tree_depth) != 0) {
                 return -1;
             }
         } else if (strcmp(argv[i], "--warn-tokens") == 0) {
             if (i + 1 < argc) {
-                if (parse_positive_size_value(argv[++i], "warn-tokens", SIZE_MAX, &options->warn_tokens) != 0) {
+                if (parse_size_value(argv[++i], "warn-tokens", 1, SIZE_MAX, &options->warn_tokens) != 0) {
                     return -1;
                 }
             } else {
@@ -237,12 +215,12 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
                 return -1;
             }
         } else if (strncmp(argv[i], "--warn-tokens=", 14) == 0) {
-            if (parse_positive_size_value(argv[i] + 14, "warn-tokens", SIZE_MAX, &options->warn_tokens) != 0) {
+            if (parse_size_value(argv[i] + 14, "warn-tokens", 1, SIZE_MAX, &options->warn_tokens) != 0) {
                 return -1;
             }
         } else if (strcmp(argv[i], "--max-tokens") == 0) {
             if (i + 1 < argc) {
-                if (parse_positive_size_value(argv[++i], "max-tokens", SIZE_MAX, &options->max_tokens) != 0) {
+                if (parse_size_value(argv[++i], "max-tokens", 1, SIZE_MAX, &options->max_tokens) != 0) {
                     return -1;
                 }
             } else {
@@ -251,7 +229,7 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
                 return -1;
             }
         } else if (strncmp(argv[i], "--max-tokens=", 13) == 0) {
-            if (parse_positive_size_value(argv[i] + 13, "max-tokens", SIZE_MAX, &options->max_tokens) != 0) {
+            if (parse_size_value(argv[i] + 13, "max-tokens", 1, SIZE_MAX, &options->max_tokens) != 0) {
                 return -1;
             }
         } else if (strcmp(argv[i], "--staged") == 0) {
