@@ -284,7 +284,7 @@ This document contains all the source code files from the current directory subt
 
 ## src/main.c
 
-```c
+```
 1 | #include <stdio.h>
 2 | 
 3 | int main() {
