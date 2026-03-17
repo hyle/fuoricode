@@ -370,6 +370,11 @@ if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-git >/dev/n
 fi
 assert_contains "$STDIN_DIR/stdin_conflict_no_git.txt" "--no-git cannot be combined with --from-stdin, --staged, --unstaged, or --diff"
 
+if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-default-ignore >/dev/null 2>stdin_conflict_no_default_ignore.txt); then
+    fail "expected --from-stdin --no-default-ignore to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_conflict_no_default_ignore.txt" "--no-default-ignore can only be used with filesystem selection"
+
 if (cd "$STDIN_DIR" && "$BIN" -0 >/dev/null 2>stdin_null_without_mode_stderr.txt); then
     fail "expected -0 without --from-stdin to fail"
 fi
@@ -457,6 +462,11 @@ if (cd "$REPO" && "$BIN" --no-git --staged >/dev/null 2>stderr_invalid.txt); the
     fail "expected --no-git --staged to fail"
 fi
 assert_contains "$REPO/stderr_invalid.txt" "--no-git cannot be combined with --from-stdin, --staged, --unstaged, or --diff"
+
+if (cd "$REPO" && "$BIN" --staged --no-default-ignore >/dev/null 2>stderr_no_default_ignore_invalid.txt); then
+    fail "expected --staged --no-default-ignore to fail"
+fi
+assert_contains "$REPO/stderr_no_default_ignore_invalid.txt" "--no-default-ignore can only be used with filesystem selection"
 
 STAGED_REPO="$TMPDIR/staged_repo"
 mkdir -p "$STAGED_REPO"

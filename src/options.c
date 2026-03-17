@@ -37,6 +37,11 @@ static void print_selection_mode_conflict(void) {
     fprintf(stderr, "Use -h or --help for usage information\n");
 }
 
+static void print_no_default_ignore_conflict(void) {
+    fprintf(stderr, "--no-default-ignore can only be used with filesystem selection\n");
+    fprintf(stderr, "Use -h or --help for usage information\n");
+}
+
 void init_cli_options(CliOptions* options) {
     if (!options) {
         return;
@@ -251,6 +256,15 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
     if (options->stdin_null_delim && options->requested_mode != FILE_SELECTION_STDIN) {
         fprintf(stderr, "-0/--null requires --from-stdin\n");
         fprintf(stderr, "Use -h or --help for usage information\n");
+        return -1;
+    }
+
+    if (options->no_default_ignore &&
+        (options->requested_mode == FILE_SELECTION_STDIN ||
+         options->requested_mode == FILE_SELECTION_GIT_STAGED ||
+         options->requested_mode == FILE_SELECTION_GIT_UNSTAGED ||
+         options->requested_mode == FILE_SELECTION_GIT_DIFF)) {
+        print_no_default_ignore_conflict();
         return -1;
     }
 
