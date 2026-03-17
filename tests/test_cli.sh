@@ -538,6 +538,21 @@ if (cd "$REPO" && "$BIN" --staged --hunks=-1 >/dev/null 2>stderr_hunks_negative_
 fi
 assert_contains "$REPO/stderr_hunks_negative_invalid.txt" "Invalid hunk context value: -1"
 
+if (cd "$REPO" && "$BIN" --tree-depth=-1 >/dev/null 2>stderr_tree_depth_negative_invalid.txt); then
+    fail "expected --tree-depth=-1 to fail"
+fi
+assert_contains "$REPO/stderr_tree_depth_negative_invalid.txt" "Invalid tree depth value: -1"
+
+if (cd "$REPO" && "$BIN" --warn-tokens=-1 >/dev/null 2>stderr_warn_tokens_negative_invalid.txt); then
+    fail "expected --warn-tokens=-1 to fail"
+fi
+assert_contains "$REPO/stderr_warn_tokens_negative_invalid.txt" "Invalid warn-tokens value: -1"
+
+if (cd "$REPO" && "$BIN" --max-tokens=-1 >/dev/null 2>stderr_max_tokens_negative_invalid.txt); then
+    fail "expected --max-tokens=-1 to fail"
+fi
+assert_contains "$REPO/stderr_max_tokens_negative_invalid.txt" "Invalid max-tokens value: -1"
+
 STAGED_REPO="$TMPDIR/staged_repo"
 mkdir -p "$STAGED_REPO"
 (cd "$STAGED_REPO" && git init -q)

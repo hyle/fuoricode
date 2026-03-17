@@ -771,13 +771,8 @@ static int emit_entry(RenderSink* sink,
     }
 }
 
-int prepare_render_plan(const ExportPlan* plan,
-                        const ExportRenderContext* ctx,
-                        RenderPlanInfo* info) {
-    GitFileHunks* hunks = NULL;
-    size_t hunk_count = 0;
-
-    if (!plan || !ctx || !info) {
+static int initialize_render_plan_info(const ExportPlan* plan, RenderPlanInfo* info) {
+    if (!plan || !info) {
         errno = EINVAL;
         return -1;
     }
@@ -802,63 +797,132 @@ int prepare_render_plan(const ExportPlan* plan,
         info->include_mask[i] = 1;
     }
 
-    if (!ctx->show_hunks) {
-        info->visible_count = plan->count;
-        return 0;
+    return 0;
+}
+
+static int collect_render_hunks(const ExportPlan* plan,
+                                const ExportRenderContext* ctx,
+                                GitFileHunks** hunks_out,
+                                size_t* hunk_count_out) {
+    if (!plan || !ctx || !hunks_out || !hunk_count_out) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx->selected_count != plan->count) {
+        errno = EINVAL;
+        return -1;
     }
 
-    if (ctx->selected_count != plan->count ||
-        collect_git_hunks(ctx->mode,
+    if (collect_git_hunks(ctx->mode,
                           ctx->diff_range,
                           ctx->selected_paths,
                           ctx->selected_count,
-                          &hunks,
-                          &hunk_count) != 0 ||
-        hunk_count != plan->count) {
-        free_git_hunks(hunks, hunk_count);
-        free_render_plan_info(info);
+                          hunks_out,
+                          hunk_count_out) != 0) {
+        return -1;
+    }
+    if (*hunk_count_out != plan->count) {
+        free_git_hunks(*hunks_out, *hunk_count_out);
+        *hunks_out = NULL;
+        *hunk_count_out = 0;
+        errno = EINVAL;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int prepare_hunk_render_entry(const ExportEntry* entry,
+                                     const SelectedPath* path,
+                                     const GitFileHunks* file_hunks,
+                                     size_t context_lines,
+                                     RenderEntryInfo* entry_info,
+                                     unsigned char* include_mask,
+                                     size_t* visible_count) {
+    if (!entry || !path || !file_hunks || !entry_info || !include_mask || !visible_count) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (strcmp(entry->open_path, path->open_path) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (path->change_type == SELECTED_PATH_CHANGE_ADDED) {
+        entry_info->mode = RENDER_ENTRY_FULL;
+        *include_mask = 1;
+        (*visible_count)++;
+        return 0;
+    }
+
+    if (compute_entry_render_ranges(entry, file_hunks, context_lines, entry_info) != 0) {
+        return -1;
+    }
+
+    if (entry_info->range_count > 0) {
+        entry_info->mode = RENDER_ENTRY_SLICED;
+        *include_mask = 1;
+        (*visible_count)++;
+    } else {
+        entry_info->mode = RENDER_ENTRY_OMIT;
+        *include_mask = 0;
+    }
+
+    return 0;
+}
+
+static int prepare_hunk_render_plan(const ExportPlan* plan,
+                                    const ExportRenderContext* ctx,
+                                    RenderPlanInfo* info) {
+    GitFileHunks* hunks = NULL;
+    size_t hunk_count = 0;
+    int status = -1;
+
+    if (collect_render_hunks(plan, ctx, &hunks, &hunk_count) != 0) {
         return -1;
     }
 
     info->visible_count = 0;
     for (size_t i = 0; i < plan->count; i++) {
-        RenderEntryInfo* entry_info = &info->entries[i];
-        const SelectedPath* path = &ctx->selected_paths[i];
-
-        if (strcmp(plan->entries[i].open_path, path->open_path) != 0) {
-            free_git_hunks(hunks, hunk_count);
-            free_render_plan_info(info);
-            errno = EINVAL;
-            return -1;
-        }
-
-        if (path->change_type == SELECTED_PATH_CHANGE_ADDED) {
-            entry_info->mode = RENDER_ENTRY_FULL;
-            info->include_mask[i] = 1;
-            info->visible_count++;
-            continue;
-        }
-
-        if (compute_entry_render_ranges(&plan->entries[i],
-                                        &hunks[i],
-                                        ctx->hunk_context_lines,
-                                        entry_info) != 0) {
-            free_git_hunks(hunks, hunk_count);
-            free_render_plan_info(info);
-            return -1;
-        }
-
-        if (entry_info->range_count > 0) {
-            entry_info->mode = RENDER_ENTRY_SLICED;
-            info->include_mask[i] = 1;
-            info->visible_count++;
-        } else {
-            entry_info->mode = RENDER_ENTRY_OMIT;
-            info->include_mask[i] = 0;
+        if (prepare_hunk_render_entry(&plan->entries[i],
+                                      &ctx->selected_paths[i],
+                                      &hunks[i],
+                                      ctx->hunk_context_lines,
+                                      &info->entries[i],
+                                      &info->include_mask[i],
+                                      &info->visible_count) != 0) {
+            goto cleanup;
         }
     }
 
+    status = 0;
+
+cleanup:
     free_git_hunks(hunks, hunk_count);
+    return status;
+}
+
+int prepare_render_plan(const ExportPlan* plan,
+                        const ExportRenderContext* ctx,
+                        RenderPlanInfo* info) {
+    if (!plan || !ctx || !info) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (initialize_render_plan_info(plan, info) != 0) {
+        return -1;
+    }
+
+    if (!ctx->show_hunks) {
+        info->visible_count = plan->count;
+        return 0;
+    }
+
+    if (prepare_hunk_render_plan(plan, ctx, info) != 0) {
+        free_render_plan_info(info);
+        return -1;
+    }
     return 0;
 }
 

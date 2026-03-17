@@ -5,7 +5,7 @@ CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wwrite-strings -Wredundant-decls \
          -Wstrict-prototypes -Wold-style-definition -std=c99 -O2 -D_POSIX_C_SOURCE=200809L
 TARGET = fuori
 TEST_CLI_TARGET = fuori-test
-SOURCES = src/main.c src/collect.c src/render.c src/git_paths.c src/ignore.c src/options.c src/tree.c
+SOURCES = src/main.c src/collect.c src/render.c src/git_paths.c src/ignore.c src/options.c src/tree.c src/sensitive.c
 TEST_TARGET = test_ignore
 TREE_TEST_TARGET = test_tree
 PREFIX ?= /usr/local
