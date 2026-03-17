@@ -216,7 +216,9 @@ static void compact_selected_paths_to_export_plan(SelectedPath* selected_paths,
                 selected_paths[write_index] = *path;
                 path->open_path = NULL;
                 path->display_path = NULL;
+                path->repo_rel_path = NULL;
                 path->previous_display_path = NULL;
+                path->previous_repo_rel_path = NULL;
             }
             write_index++;
             continue;
@@ -224,10 +226,14 @@ static void compact_selected_paths_to_export_plan(SelectedPath* selected_paths,
 
         free(path->open_path);
         free(path->display_path);
+        free(path->repo_rel_path);
         free(path->previous_display_path);
+        free(path->previous_repo_rel_path);
         path->open_path = NULL;
         path->display_path = NULL;
+        path->repo_rel_path = NULL;
         path->previous_display_path = NULL;
+        path->previous_repo_rel_path = NULL;
     }
 
     *selected_count = write_index;
@@ -318,11 +324,6 @@ int main(int argc, char* argv[]) {
         compact_selected_paths_to_export_plan(selected_paths, &selected_count, &plan);
     }
 
-    if (prepare_render_plan(&plan, &render_info) != 0) {
-        perror("Error preparing render plan");
-        goto cleanup;
-    }
-
     if (resolve_repository_name(options.resolved_mode, repository_name, sizeof(repository_name)) != 0) {
         perror("Error resolving repository name");
         goto cleanup;
@@ -340,8 +341,15 @@ int main(int argc, char* argv[]) {
     render_ctx.selected_count = selected_count;
     render_ctx.diff_range = options.diff_range;
     render_ctx.show_line_numbers = options.show_line_numbers;
+    render_ctx.show_hunks = options.show_hunks;
     render_ctx.show_tree = ctx.show_tree;
+    render_ctx.hunk_context_lines = options.hunk_context_lines;
     render_ctx.tree_depth = ctx.tree_depth;
+
+    if (prepare_render_plan(&plan, &render_ctx, &render_info) != 0) {
+        perror("Error preparing render plan");
+        goto cleanup;
+    }
 
     if (calculate_export_metrics(&plan, &render_info, &render_ctx, &metrics) != 0) {
         perror("Error calculating export metrics");
@@ -426,7 +434,10 @@ int main(int argc, char* argv[]) {
     }
 
     if (render_ctx.show_tree) {
-        if (write_project_tree(output_file, &plan, render_ctx.tree_depth) != 0) {
+        if (write_project_tree_filtered(output_file,
+                                        &plan,
+                                        render_info.include_mask,
+                                        render_ctx.tree_depth) != 0) {
             perror("Error writing project tree");
             goto cleanup;
         }

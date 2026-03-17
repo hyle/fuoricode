@@ -50,6 +50,15 @@ typedef struct {
     size_t* total;
 } RenderSink;
 
+typedef struct {
+    size_t* starts;
+    size_t* ends;
+    size_t count;
+} LineIndex;
+
+static int count_fence_bytes(size_t* total, size_t count, const char* lang);
+static int write_fence(FILE* out, size_t count, const char* lang);
+
 static const char* export_description(FileSelectionMode mode) {
     switch (mode) {
         case FILE_SELECTION_GIT_WORKTREE:
@@ -159,6 +168,21 @@ static int sink_write_bytes(RenderSink* sink, const void* data, size_t len) {
     }
     if (sink->total) {
         return add_size(sink->total, len);
+    }
+    errno = EINVAL;
+    return -1;
+}
+
+static int sink_write_fence(RenderSink* sink, size_t count, const char* lang) {
+    if (!sink) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (sink->out) {
+        return write_fence(sink->out, count, lang);
+    }
+    if (sink->total) {
+        return count_fence_bytes(sink->total, count, lang);
     }
     errno = EINVAL;
     return -1;
@@ -298,6 +322,15 @@ static int emit_export_header(RenderSink* sink, const ExportRenderContext* ctx) 
         (sink_write_text(sink, "\nLine numbers: on") != 0)) {
         return -1;
     }
+    if (ctx->show_hunks) {
+        char context_buf[32];
+        if (format_size_value(ctx->hunk_context_lines, context_buf, sizeof(context_buf)) != 0 ||
+            sink_write_text(sink, "\nHunks: on (context: ") != 0 ||
+            sink_write_text(sink, context_buf) != 0 ||
+            sink_write_char(sink, ')') != 0) {
+            return -1;
+        }
+    }
 
     if (sink_write_text(sink, "\n\n") != 0 ||
         sink_write_text(sink, export_description(ctx->mode)) != 0) {
@@ -390,29 +423,442 @@ static size_t compute_fence_length(const ExportEntry* entry) {
     return (max_run >= 3) ? max_run + 1 : 3;
 }
 
-int prepare_render_plan(const ExportPlan* plan, RenderPlanInfo* info) {
-    if (!plan || !info) {
+static int append_render_range(RenderEntryInfo* info,
+                               size_t* capacity,
+                               size_t start_line,
+                               size_t end_line) {
+    RenderLineRange* new_ranges;
+    size_t new_capacity;
+
+    if (!info || !capacity || start_line == 0 || end_line < start_line) {
         errno = EINVAL;
         return -1;
     }
 
-    info->fence_lengths = NULL;
-    info->count = 0;
+    if (info->range_count > 0) {
+        RenderLineRange* last = &info->ranges[info->range_count - 1];
+        if (start_line <= last->end_line + 1) {
+            if (end_line > last->end_line) {
+                last->end_line = end_line;
+            }
+            return 0;
+        }
+    }
 
+    if (info->range_count == *capacity) {
+        new_capacity = (*capacity == 0) ? 4 : *capacity * 2;
+        new_ranges = realloc(info->ranges, new_capacity * sizeof(*new_ranges));
+        if (!new_ranges) {
+            return -1;
+        }
+        info->ranges = new_ranges;
+        *capacity = new_capacity;
+    }
+
+    info->ranges[info->range_count].start_line = start_line;
+    info->ranges[info->range_count].end_line = end_line;
+    info->range_count++;
+    return 0;
+}
+
+static int compute_entry_render_ranges(const ExportEntry* entry,
+                                       const GitFileHunks* hunks,
+                                       size_t context_lines,
+                                       RenderEntryInfo* info) {
+    size_t capacity = 0;
+
+    if (!entry || !hunks || !info) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    info->total_lines = entry_line_count(entry);
+    if (info->total_lines == 0) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < hunks->count; i++) {
+        size_t changed_start = hunks->ranges[i].new_start;
+        size_t changed_end = changed_start;
+        size_t render_start;
+        size_t render_end;
+
+        if (changed_start == 0) {
+            changed_start = 1;
+        }
+        if (changed_start > info->total_lines) {
+            changed_start = info->total_lines;
+        }
+
+        if (hunks->ranges[i].new_count > 0) {
+            if (hunks->ranges[i].new_start > SIZE_MAX - (hunks->ranges[i].new_count - 1)) {
+                changed_end = SIZE_MAX;
+            } else {
+                changed_end = hunks->ranges[i].new_start + hunks->ranges[i].new_count - 1;
+            }
+            if (changed_end < changed_start) {
+                changed_end = changed_start;
+            }
+            if (changed_end > info->total_lines) {
+                changed_end = info->total_lines;
+            }
+        }
+
+        render_start = (changed_start > context_lines) ? changed_start - context_lines : 1;
+        render_end = changed_end;
+        if (context_lines >= info->total_lines ||
+            render_end > info->total_lines - context_lines) {
+            render_end = info->total_lines;
+        } else {
+            render_end += context_lines;
+        }
+
+        if (append_render_range(info, &capacity, render_start, render_end) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int build_line_index(const ExportEntry* entry, LineIndex* index) {
+    size_t line_count;
+    size_t line_no = 0;
+    size_t line_start = 0;
+
+    if (!entry || !index) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    memset(index, 0, sizeof(*index));
+    line_count = entry_line_count(entry);
+    if (line_count == 0) {
+        return 0;
+    }
+
+    index->starts = malloc(line_count * sizeof(*index->starts));
+    index->ends = malloc(line_count * sizeof(*index->ends));
+    if (!index->starts || !index->ends) {
+        free(index->starts);
+        free(index->ends);
+        index->starts = NULL;
+        index->ends = NULL;
+        return -1;
+    }
+
+    for (size_t i = 0; i < entry->buf_len; i++) {
+        if (entry->buf[i] != '\n') {
+            continue;
+        }
+        index->starts[line_no] = line_start;
+        index->ends[line_no] = i + 1;
+        line_no++;
+        line_start = i + 1;
+    }
+
+    if (line_start < entry->buf_len || (entry->buf_len > 0 && entry->buf[entry->buf_len - 1] != '\n')) {
+        index->starts[line_no] = line_start;
+        index->ends[line_no] = entry->buf_len;
+        line_no++;
+    }
+
+    index->count = line_no;
+    return 0;
+}
+
+static void free_line_index(LineIndex* index) {
+    if (!index) {
+        return;
+    }
+    free(index->starts);
+    free(index->ends);
+    index->starts = NULL;
+    index->ends = NULL;
+    index->count = 0;
+}
+
+static int emit_entry_heading(RenderSink* sink, const ExportEntry* entry) {
+    if (!sink || !entry) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (sink_write_text(sink, "## ") != 0 ||
+        emit_markdown_path(sink, entry->display_path) != 0 ||
+        sink_write_text(sink, "\n\n") != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int emit_line_range(RenderSink* sink,
+                           const ExportEntry* entry,
+                           const LineIndex* index,
+                           size_t start_line,
+                           size_t end_line,
+                           int show_line_numbers,
+                           size_t line_number_width) {
+    if (!sink || !entry || !index || start_line == 0 || end_line < start_line || end_line > index->count) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    for (size_t line_no = start_line; line_no <= end_line; line_no++) {
+        size_t offset = line_no - 1;
+        size_t start = index->starts[offset];
+        size_t end = index->ends[offset];
+
+        if (show_line_numbers &&
+            (emit_line_number_prefix(sink, line_no, line_number_width) != 0 ||
+             sink_write_text(sink, " | ") != 0)) {
+            return -1;
+        }
+        if (end > start &&
+            sink_write_bytes(sink, entry->buf + start, end - start) != 0) {
+            return -1;
+        }
+        if (end == start || entry->buf[end - 1] != '\n') {
+            if (sink_write_char(sink, '\n') != 0) {
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int emit_omission_marker(RenderSink* sink, size_t omitted_lines) {
+    char count_buf[32];
+
+    if (!sink || omitted_lines == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (format_size_value(omitted_lines, count_buf, sizeof(count_buf)) != 0 ||
+        sink_write_text(sink, "... ") != 0 ||
+        sink_write_text(sink, count_buf) != 0 ||
+        sink_write_text(sink, " unchanged lines omitted ...\n\n") != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int emit_full_entry(RenderSink* sink,
+                           const ExportEntry* entry,
+                           const RenderEntryInfo* entry_info,
+                           const ExportRenderContext* ctx) {
+    LineIndex index = {0};
+    size_t width = 0;
+    int status = -1;
+
+    if (!sink || !entry || !entry_info || !ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (emit_entry_heading(sink, entry) != 0 ||
+        sink_write_fence(sink, entry_info->fence_length, entry->lang) != 0) {
+        return -1;
+    }
+
+    if (build_line_index(entry, &index) != 0) {
+        goto cleanup;
+    }
+
+    if (ctx->show_line_numbers) {
+        width = decimal_digit_count(entry_info->total_lines);
+    }
+    if (index.count > 0 &&
+        emit_line_range(sink,
+                        entry,
+                        &index,
+                        1,
+                        index.count,
+                        ctx->show_line_numbers,
+                        width) != 0) {
+        goto cleanup;
+    }
+
+    if (sink_write_fence(sink, entry_info->fence_length, NULL) != 0 ||
+        sink_write_text(sink, "\n\n") != 0) {
+        goto cleanup;
+    }
+
+    status = 0;
+
+cleanup:
+    free_line_index(&index);
+    return status;
+}
+
+static int emit_sliced_entry(RenderSink* sink,
+                             const ExportEntry* entry,
+                             const RenderEntryInfo* entry_info,
+                             const ExportRenderContext* ctx) {
+    LineIndex index = {0};
+    size_t width = 0;
+    size_t previous_end = 0;
+    int status = -1;
+
+    if (!sink || !entry || !entry_info || !ctx || entry_info->range_count == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (emit_entry_heading(sink, entry) != 0 ||
+        build_line_index(entry, &index) != 0) {
+        goto cleanup;
+    }
+
+    if (ctx->show_line_numbers) {
+        width = decimal_digit_count(entry_info->total_lines);
+    }
+
+    for (size_t i = 0; i < entry_info->range_count; i++) {
+        const RenderLineRange* range = &entry_info->ranges[i];
+        if (range->start_line > previous_end + 1 &&
+            emit_omission_marker(sink, range->start_line - previous_end - 1) != 0) {
+            goto cleanup;
+        }
+        if (sink_write_fence(sink, entry_info->fence_length, entry->lang) != 0 ||
+            emit_line_range(sink,
+                            entry,
+                            &index,
+                            range->start_line,
+                            range->end_line,
+                            ctx->show_line_numbers,
+                            width) != 0 ||
+            sink_write_fence(sink, entry_info->fence_length, NULL) != 0 ||
+            sink_write_text(sink, "\n\n") != 0) {
+            goto cleanup;
+        }
+        previous_end = range->end_line;
+    }
+
+    if (entry_info->total_lines > previous_end &&
+        emit_omission_marker(sink, entry_info->total_lines - previous_end) != 0) {
+        goto cleanup;
+    }
+
+    status = 0;
+
+cleanup:
+    free_line_index(&index);
+    return status;
+}
+
+static int emit_entry(RenderSink* sink,
+                      const ExportEntry* entry,
+                      const RenderEntryInfo* entry_info,
+                      const ExportRenderContext* ctx) {
+    if (!sink || !entry || !entry_info || !ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    switch (entry_info->mode) {
+        case RENDER_ENTRY_FULL:
+            return emit_full_entry(sink, entry, entry_info, ctx);
+        case RENDER_ENTRY_SLICED:
+            return emit_sliced_entry(sink, entry, entry_info, ctx);
+        case RENDER_ENTRY_OMIT:
+            return 0;
+        default:
+            errno = EINVAL;
+            return -1;
+    }
+}
+
+int prepare_render_plan(const ExportPlan* plan,
+                        const ExportRenderContext* ctx,
+                        RenderPlanInfo* info) {
+    GitFileHunks* hunks = NULL;
+    size_t hunk_count = 0;
+
+    if (!plan || !ctx || !info) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    memset(info, 0, sizeof(*info));
     if (plan->count == 0) {
         return 0;
     }
 
-    info->fence_lengths = malloc(plan->count * sizeof(*info->fence_lengths));
-    if (!info->fence_lengths) {
+    info->entries = calloc(plan->count, sizeof(*info->entries));
+    info->include_mask = calloc(plan->count, sizeof(*info->include_mask));
+    if (!info->entries || !info->include_mask) {
+        free_render_plan_info(info);
         return -1;
     }
 
     info->count = plan->count;
     for (size_t i = 0; i < plan->count; i++) {
-        info->fence_lengths[i] = compute_fence_length(&plan->entries[i]);
+        info->entries[i].fence_length = compute_fence_length(&plan->entries[i]);
+        info->entries[i].total_lines = entry_line_count(&plan->entries[i]);
+        info->entries[i].mode = RENDER_ENTRY_FULL;
+        info->include_mask[i] = 1;
     }
 
+    if (!ctx->show_hunks) {
+        info->visible_count = plan->count;
+        return 0;
+    }
+
+    if (ctx->selected_count != plan->count ||
+        collect_git_hunks(ctx->mode,
+                          ctx->diff_range,
+                          ctx->selected_paths,
+                          ctx->selected_count,
+                          &hunks,
+                          &hunk_count) != 0 ||
+        hunk_count != plan->count) {
+        free_git_hunks(hunks, hunk_count);
+        free_render_plan_info(info);
+        return -1;
+    }
+
+    info->visible_count = 0;
+    for (size_t i = 0; i < plan->count; i++) {
+        RenderEntryInfo* entry_info = &info->entries[i];
+        const SelectedPath* path = &ctx->selected_paths[i];
+
+        if (strcmp(plan->entries[i].open_path, path->open_path) != 0) {
+            free_git_hunks(hunks, hunk_count);
+            free_render_plan_info(info);
+            errno = EINVAL;
+            return -1;
+        }
+
+        if (path->change_type == SELECTED_PATH_CHANGE_ADDED) {
+            entry_info->mode = RENDER_ENTRY_FULL;
+            info->include_mask[i] = 1;
+            info->visible_count++;
+            continue;
+        }
+
+        if (compute_entry_render_ranges(&plan->entries[i],
+                                        &hunks[i],
+                                        ctx->hunk_context_lines,
+                                        entry_info) != 0) {
+            free_git_hunks(hunks, hunk_count);
+            free_render_plan_info(info);
+            return -1;
+        }
+
+        if (entry_info->range_count > 0) {
+            entry_info->mode = RENDER_ENTRY_SLICED;
+            info->include_mask[i] = 1;
+            info->visible_count++;
+        } else {
+            entry_info->mode = RENDER_ENTRY_OMIT;
+            info->include_mask[i] = 0;
+        }
+    }
+
+    free_git_hunks(hunks, hunk_count);
     return 0;
 }
 
@@ -421,97 +867,17 @@ void free_render_plan_info(RenderPlanInfo* info) {
         return;
     }
 
-    free(info->fence_lengths);
-    info->fence_lengths = NULL;
+    if (info->entries) {
+        for (size_t i = 0; i < info->count; i++) {
+            free(info->entries[i].ranges);
+        }
+    }
+    free(info->entries);
+    free(info->include_mask);
+    info->entries = NULL;
+    info->include_mask = NULL;
     info->count = 0;
-}
-
-static int get_fence_length(const RenderPlanInfo* info, size_t index, size_t* fence_out) {
-    if (!info || !fence_out || index >= info->count) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    *fence_out = info->fence_lengths[index];
-    return 0;
-}
-
-static int emit_entry_body(RenderSink* sink, const ExportEntry* entry, int show_line_numbers) {
-    size_t line_count = 0;
-    size_t width = 0;
-    size_t line_no = 1;
-    size_t line_start = 0;
-
-    if (!sink || !entry) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if (!show_line_numbers) {
-        if (entry->buf_len > 0 && sink_write_bytes(sink, entry->buf, entry->buf_len) != 0) {
-            return -1;
-        }
-        if (entry->buf_len > 0 &&
-            entry->buf[entry->buf_len - 1] != '\n' &&
-            sink_write_char(sink, '\n') != 0) {
-            return -1;
-        }
-        return 0;
-    }
-
-    line_count = entry_line_count(entry);
-    if (line_count == 0) {
-        return 0;
-    }
-    width = decimal_digit_count(line_count);
-
-    for (size_t i = 0; i < entry->buf_len; i++) {
-        if (entry->buf[i] != '\n') {
-            continue;
-        }
-        if (emit_line_number_prefix(sink, line_no, width) != 0 ||
-            sink_write_text(sink, " | ") != 0 ||
-            sink_write_bytes(sink, entry->buf + line_start, (i - line_start) + 1) != 0) {
-            return -1;
-        }
-        line_no++;
-        line_start = i + 1;
-    }
-
-    if (line_start < entry->buf_len) {
-        if (emit_line_number_prefix(sink, line_no, width) != 0 ||
-            sink_write_text(sink, " | ") != 0 ||
-            sink_write_bytes(sink, entry->buf + line_start, entry->buf_len - line_start) != 0 ||
-            sink_write_char(sink, '\n') != 0) {
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
-static int emit_entry(RenderSink* sink,
-                      const ExportEntry* entry,
-                      size_t fence,
-                      const ExportRenderContext* ctx) {
-    if (!sink || !entry || !ctx) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if (sink_write_text(sink, "## ") != 0 ||
-        emit_markdown_path(sink, entry->display_path) != 0 ||
-        sink_write_text(sink, "\n\n") != 0 ||
-        (sink->out ? write_fence(sink->out, fence, entry->lang)
-                   : count_fence_bytes(sink->total, fence, entry->lang)) != 0 ||
-        emit_entry_body(sink, entry, ctx->show_line_numbers) != 0 ||
-        (sink->out ? write_fence(sink->out, fence, NULL)
-                   : count_fence_bytes(sink->total, fence, NULL)) != 0 ||
-        sink_write_text(sink, "\n\n") != 0) {
-        return -1;
-    }
-
-    return 0;
+    info->visible_count = 0;
 }
 
 int calculate_export_metrics(const ExportPlan* plan,
@@ -526,26 +892,26 @@ int calculate_export_metrics(const ExportPlan* plan,
         return -1;
     }
 
-    if (emit_export_header(&sink, ctx) != 0) {
-        return -1;
-    }
-    if (emit_change_context(&sink, ctx) != 0) {
+    if (emit_export_header(&sink, ctx) != 0 ||
+        emit_change_context(&sink, ctx) != 0) {
         return -1;
     }
 
-    if (ctx->show_tree && count_project_tree_bytes(plan, ctx->tree_depth, &total) != 0) {
+    if (ctx->show_tree &&
+        count_project_tree_bytes_filtered(plan, info->include_mask, ctx->tree_depth, &total) != 0) {
         return -1;
     }
 
     for (size_t i = 0; i < plan->count; i++) {
-        size_t fence = 0;
-        if (get_fence_length(info, i, &fence) != 0 ||
-            emit_entry(&sink, &plan->entries[i], fence, ctx) != 0) {
+        if (!info->include_mask[i]) {
+            continue;
+        }
+        if (emit_entry(&sink, &plan->entries[i], &info->entries[i], ctx) != 0) {
             return -1;
         }
     }
 
-    metrics->files_exported = plan->count;
+    metrics->files_exported = info->visible_count;
     metrics->bytes_written = total;
     metrics->estimated_tokens = estimate_tokens(total);
     return 0;
@@ -564,7 +930,9 @@ int render_export_plan(FILE* out,
     }
 
     for (size_t i = 0; i < plan->count; i++) {
-        size_t fence = 0;
+        if (!info->include_mask[i]) {
+            continue;
+        }
         if (verbose) {
             fprintf(stderr, "Processing file: %s\n", plan->entries[i].display_path);
         }
@@ -573,8 +941,7 @@ int render_export_plan(FILE* out,
             return -1;
         }
 #endif
-        if (get_fence_length(info, i, &fence) != 0 ||
-            emit_entry(&sink, &plan->entries[i], fence, ctx) != 0) {
+        if (emit_entry(&sink, &plan->entries[i], &info->entries[i], ctx) != 0) {
             return -1;
         }
     }

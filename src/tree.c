@@ -402,7 +402,10 @@ static int count_tree_children_bytes(const TreeNode* node,
     return 0;
 }
 
-int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
+int write_project_tree_filtered(FILE* out,
+                                const ExportPlan* plan,
+                                const unsigned char* include_mask,
+                                size_t max_depth) {
     TreeNode* root = tree_node_create("", 1);
     TreePrefixBuffer prefix = {0};
     size_t fence_len = 3;
@@ -412,6 +415,9 @@ int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
     }
 
     for (size_t i = 0; i < plan->count; i++) {
+        if (include_mask && !include_mask[i]) {
+            continue;
+        }
         if (tree_add_path(root, plan->entries[i].display_path) != 0) {
             free_tree(root);
             return -1;
@@ -448,7 +454,10 @@ cleanup:
     return result;
 }
 
-int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* total) {
+int count_project_tree_bytes_filtered(const ExportPlan* plan,
+                                      const unsigned char* include_mask,
+                                      size_t max_depth,
+                                      size_t* total) {
     TreeNode* root = tree_node_create("", 1);
     size_t fence_len = 3;
     if (!root) {
@@ -456,6 +465,9 @@ int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* t
     }
 
     for (size_t i = 0; i < plan->count; i++) {
+        if (include_mask && !include_mask[i]) {
+            continue;
+        }
         if (tree_add_path(root, plan->entries[i].display_path) != 0) {
             free_tree(root);
             return -1;
@@ -482,4 +494,12 @@ int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* t
 
     free_tree(root);
     return count_tree_close_fence_bytes(total, fence_len);
+}
+
+int write_project_tree(FILE* out, const ExportPlan* plan, size_t max_depth) {
+    return write_project_tree_filtered(out, plan, NULL, max_depth);
+}
+
+int count_project_tree_bytes(const ExportPlan* plan, size_t max_depth, size_t* total) {
+    return count_project_tree_bytes_filtered(plan, NULL, max_depth, total);
 }

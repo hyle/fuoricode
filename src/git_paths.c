@@ -16,6 +16,7 @@ typedef enum {
 } GitProbeResult;
 
 #define GIT_SELECTION_ARGS_MAX 13
+#define GIT_HUNK_ARGS_MAX 13
 
 typedef struct {
     char* repo_root;
@@ -33,12 +34,23 @@ static int compare_selected_paths(const void* lhs, const void* rhs) {
     if (open_cmp != 0) {
         return open_cmp;
     }
+    const char* left_repo_rel = left->repo_rel_path ? left->repo_rel_path : "";
+    const char* right_repo_rel = right->repo_rel_path ? right->repo_rel_path : "";
+    int repo_rel_cmp = strcmp(left_repo_rel, right_repo_rel);
+    if (repo_rel_cmp != 0) {
+        return repo_rel_cmp;
+    }
     if (left->change_type != right->change_type) {
         return (left->change_type < right->change_type) ? -1 : 1;
     }
     const char* left_previous = left->previous_display_path ? left->previous_display_path : "";
     const char* right_previous = right->previous_display_path ? right->previous_display_path : "";
-    return strcmp(left_previous, right_previous);
+    int previous_cmp = strcmp(left_previous, right_previous);
+    if (previous_cmp != 0) {
+        return previous_cmp;
+    }
+    return strcmp(left->previous_repo_rel_path ? left->previous_repo_rel_path : "",
+                  right->previous_repo_rel_path ? right->previous_repo_rel_path : "");
 }
 
 void free_selected_paths(SelectedPath* paths, size_t count) {
@@ -46,7 +58,9 @@ void free_selected_paths(SelectedPath* paths, size_t count) {
     for (size_t i = 0; i < count; i++) {
         free(paths[i].open_path);
         free(paths[i].display_path);
+        free(paths[i].repo_rel_path);
         free(paths[i].previous_display_path);
+        free(paths[i].previous_repo_rel_path);
     }
     free(paths);
 }
@@ -67,22 +81,32 @@ static int normalize_selected_paths(SelectedPath* paths, size_t* count) {
         for (size_t i = 1; i < *count; i++) {
             if (strcmp(paths[i - 1].open_path, paths[i].open_path) == 0 &&
                 strcmp(paths[i - 1].display_path, paths[i].display_path) == 0 &&
+                strcmp(paths[i - 1].repo_rel_path ? paths[i - 1].repo_rel_path : "",
+                       paths[i].repo_rel_path ? paths[i].repo_rel_path : "") == 0 &&
                 paths[i - 1].change_type == paths[i].change_type &&
                 strcmp(paths[i - 1].previous_display_path ? paths[i - 1].previous_display_path : "",
-                       paths[i].previous_display_path ? paths[i].previous_display_path : "") == 0) {
+                       paths[i].previous_display_path ? paths[i].previous_display_path : "") == 0 &&
+                strcmp(paths[i - 1].previous_repo_rel_path ? paths[i - 1].previous_repo_rel_path : "",
+                       paths[i].previous_repo_rel_path ? paths[i].previous_repo_rel_path : "") == 0) {
                 free(paths[i].open_path);
                 free(paths[i].display_path);
+                free(paths[i].repo_rel_path);
                 free(paths[i].previous_display_path);
+                free(paths[i].previous_repo_rel_path);
                 paths[i].open_path = NULL;
                 paths[i].display_path = NULL;
+                paths[i].repo_rel_path = NULL;
                 paths[i].previous_display_path = NULL;
+                paths[i].previous_repo_rel_path = NULL;
                 continue;
             }
             if (unique_count != i) {
                 paths[unique_count] = paths[i];
                 paths[i].open_path = NULL;
                 paths[i].display_path = NULL;
+                paths[i].repo_rel_path = NULL;
                 paths[i].previous_display_path = NULL;
+                paths[i].previous_repo_rel_path = NULL;
             }
             unique_count++;
         }
@@ -417,15 +441,41 @@ static int append_selected_path(SelectedPath** paths,
         return -1;
     }
 
+    (*paths)[*count].repo_rel_path = strdup(repo_rel);
+    if (!(*paths)[*count].repo_rel_path) {
+        free((*paths)[*count].open_path);
+        free((*paths)[*count].display_path);
+        (*paths)[*count].open_path = NULL;
+        (*paths)[*count].display_path = NULL;
+        return -1;
+    }
+
     (*paths)[*count].change_type = change_type;
     (*paths)[*count].previous_display_path = NULL;
+    (*paths)[*count].previous_repo_rel_path = NULL;
     if (previous_display_rel) {
         (*paths)[*count].previous_display_path = strdup(previous_display_rel);
         if (!(*paths)[*count].previous_display_path) {
             free((*paths)[*count].open_path);
             free((*paths)[*count].display_path);
+            free((*paths)[*count].repo_rel_path);
             (*paths)[*count].open_path = NULL;
             (*paths)[*count].display_path = NULL;
+            (*paths)[*count].repo_rel_path = NULL;
+            return -1;
+        }
+    }
+    if (previous_repo_rel) {
+        (*paths)[*count].previous_repo_rel_path = strdup(previous_repo_rel);
+        if (!(*paths)[*count].previous_repo_rel_path) {
+            free((*paths)[*count].open_path);
+            free((*paths)[*count].display_path);
+            free((*paths)[*count].repo_rel_path);
+            free((*paths)[*count].previous_display_path);
+            (*paths)[*count].open_path = NULL;
+            (*paths)[*count].display_path = NULL;
+            (*paths)[*count].repo_rel_path = NULL;
+            (*paths)[*count].previous_display_path = NULL;
             return -1;
         }
     }
@@ -464,8 +514,10 @@ static int append_literal_selected_path(SelectedPath** paths,
     }
     memcpy((*paths)[*count].display_path, path, path_len);
     (*paths)[*count].display_path[path_len] = '\0';
+    (*paths)[*count].repo_rel_path = NULL;
     (*paths)[*count].change_type = SELECTED_PATH_CHANGE_NONE;
     (*paths)[*count].previous_display_path = NULL;
+    (*paths)[*count].previous_repo_rel_path = NULL;
 
     (*count)++;
     return 0;
@@ -735,6 +787,263 @@ static int build_git_selection_args(const GitRepoPaths* repo,
     return 0;
 }
 
+static int append_git_hunk_range(GitFileHunks* hunks, size_t* capacity, size_t new_start, size_t new_count) {
+    GitHunkRange* new_ranges;
+    size_t new_capacity;
+
+    if (!hunks || !capacity) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (hunks->count == *capacity) {
+        new_capacity = (*capacity == 0) ? 4 : *capacity * 2;
+        new_ranges = realloc(hunks->ranges, new_capacity * sizeof(*new_ranges));
+        if (!new_ranges) {
+            return -1;
+        }
+        hunks->ranges = new_ranges;
+        *capacity = new_capacity;
+    }
+
+    hunks->ranges[hunks->count].new_start = new_start;
+    hunks->ranges[hunks->count].new_count = new_count;
+    hunks->count++;
+    return 0;
+}
+
+static int parse_hunk_number(const char** cursor, const char* end, size_t* value_out) {
+    size_t value = 0;
+    const char* p;
+
+    if (!cursor || !*cursor || !value_out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    p = *cursor;
+    if (p >= end || *p < '0' || *p > '9') {
+        errno = EINVAL;
+        return -1;
+    }
+
+    while (p < end && *p >= '0' && *p <= '9') {
+        unsigned digit = (unsigned)(*p - '0');
+        if (value > (SIZE_MAX - digit) / 10) {
+            errno = EOVERFLOW;
+            return -1;
+        }
+        value = value * 10 + digit;
+        p++;
+    }
+
+    *cursor = p;
+    *value_out = value;
+    return 0;
+}
+
+static int parse_unified_hunk_header(const char* line,
+                                     size_t line_len,
+                                     size_t* new_start_out,
+                                     size_t* new_count_out) {
+    const char* p;
+    const char* end;
+    size_t ignored = 0;
+    size_t new_start = 0;
+    size_t new_count = 1;
+
+    if (!line || !new_start_out || !new_count_out) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (line_len < 4 || line[0] != '@' || line[1] != '@') {
+        return 0;
+    }
+
+    p = line + 2;
+    end = line + line_len;
+    while (p < end && *p == ' ') {
+        p++;
+    }
+    if (p >= end || *p != '-') {
+        errno = EINVAL;
+        return -1;
+    }
+    p++;
+    if (parse_hunk_number(&p, end, &ignored) != 0) {
+        return -1;
+    }
+    if (p < end && *p == ',') {
+        p++;
+        if (parse_hunk_number(&p, end, &ignored) != 0) {
+            return -1;
+        }
+    }
+    while (p < end && *p == ' ') {
+        p++;
+    }
+    if (p >= end || *p != '+') {
+        errno = EINVAL;
+        return -1;
+    }
+    p++;
+    if (parse_hunk_number(&p, end, &new_start) != 0) {
+        return -1;
+    }
+    if (p < end && *p == ',') {
+        p++;
+        if (parse_hunk_number(&p, end, &new_count) != 0) {
+            return -1;
+        }
+    }
+    while (p < end && *p == ' ') {
+        p++;
+    }
+    if ((size_t)(end - p) < 2 || p[0] != '@' || p[1] != '@') {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *new_start_out = new_start;
+    *new_count_out = new_count;
+    return 1;
+}
+
+static int parse_hunk_ranges_from_diff_output(const unsigned char* output,
+                                              size_t output_len,
+                                              GitFileHunks* hunks) {
+    size_t start = 0;
+    size_t capacity = 0;
+
+    if (!hunks) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    while (start < output_len) {
+        size_t end = start;
+        size_t new_start = 0;
+        size_t new_count = 0;
+        int header_status;
+
+        while (end < output_len && output[end] != '\n') {
+            end++;
+        }
+        if (end > start && output[end - 1] == '\r') {
+            end--;
+        }
+
+        header_status = parse_unified_hunk_header((const char*)(output + start),
+                                                  end - start,
+                                                  &new_start,
+                                                  &new_count);
+        if (header_status < 0) {
+            return -1;
+        }
+        if (header_status > 0 &&
+            append_git_hunk_range(hunks, &capacity, new_start, new_count) != 0) {
+            return -1;
+        }
+
+        start = (end < output_len && output[end] == '\n') ? end + 1 : output_len;
+    }
+
+    return 0;
+}
+
+static int derive_repo_root_from_selected_paths(const SelectedPath* paths,
+                                                size_t path_count,
+                                                char** repo_root_out) {
+    for (size_t i = 0; i < path_count; i++) {
+        const SelectedPath* path = &paths[i];
+        size_t open_len;
+        size_t repo_rel_len;
+        size_t repo_root_len;
+        char* repo_root;
+
+        if (!path->open_path || !path->repo_rel_path) {
+            continue;
+        }
+
+        open_len = strlen(path->open_path);
+        repo_rel_len = strlen(path->repo_rel_path);
+        if (open_len <= repo_rel_len ||
+            strcmp(path->open_path + open_len - repo_rel_len, path->repo_rel_path) != 0 ||
+            path->open_path[open_len - repo_rel_len - 1] != '/') {
+            errno = EINVAL;
+            return -1;
+        }
+
+        repo_root_len = open_len - repo_rel_len - 1;
+        if (repo_root_len == 0) {
+            repo_root = strdup("/");
+        } else {
+            repo_root = malloc(repo_root_len + 1);
+            if (repo_root) {
+                memcpy(repo_root, path->open_path, repo_root_len);
+                repo_root[repo_root_len] = '\0';
+            }
+        }
+        if (!repo_root) {
+            return -1;
+        }
+
+        *repo_root_out = repo_root;
+        return 0;
+    }
+
+    errno = EINVAL;
+    return -1;
+}
+
+static int build_git_hunk_args(const char* repo_root,
+                               FileSelectionMode mode,
+                               const char* diff_range,
+                               const SelectedPath* path,
+                               const char* repo_rel_path,
+                               const char** args,
+                               size_t args_size) {
+    size_t argc = 0;
+
+    if (!repo_root || !path || !repo_rel_path || !args || args_size < 1) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (append_arg(args, args_size, &argc, "git") != 0 ||
+        append_arg(args, args_size, &argc, "-C") != 0 ||
+        append_arg(args, args_size, &argc, repo_root) != 0 ||
+        append_arg(args, args_size, &argc, "diff") != 0) {
+        return -1;
+    }
+    if (mode == FILE_SELECTION_GIT_STAGED &&
+        append_arg(args, args_size, &argc, "--cached") != 0) {
+        return -1;
+    }
+    if (append_arg(args, args_size, &argc, "-U0") != 0 ||
+        append_arg(args, args_size, &argc, "--no-color") != 0 ||
+        append_arg(args, args_size, &argc, "--no-ext-diff") != 0) {
+        return -1;
+    }
+    if (mode == FILE_SELECTION_GIT_DIFF &&
+        append_arg(args, args_size, &argc, diff_range) != 0) {
+        return -1;
+    }
+    if (append_arg(args, args_size, &argc, "--") != 0) {
+        return -1;
+    }
+    if (path->change_type == SELECTED_PATH_CHANGE_RENAMED &&
+        path->previous_repo_rel_path &&
+        append_arg(args, args_size, &argc, path->previous_repo_rel_path) != 0) {
+        return -1;
+    }
+    if (append_arg(args, args_size, &argc, repo_rel_path) != 0) {
+        return -1;
+    }
+
+    args[argc] = NULL;
+    return 0;
+}
+
 int collect_stdin_paths(int null_delim,
                         SelectedPath** paths_out,
                         size_t* count_out) {
@@ -868,6 +1177,101 @@ cleanup:
     return status;
 }
 
+int collect_git_hunks(FileSelectionMode mode,
+                      const char* diff_range,
+                      const SelectedPath* paths,
+                      size_t path_count,
+                      GitFileHunks** hunks_out,
+                      size_t* hunk_count_out) {
+    char* repo_root = NULL;
+    GitFileHunks* hunks = NULL;
+    int status = -1;
+
+    if (!hunks_out || !hunk_count_out || (path_count > 0 && !paths)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *hunks_out = NULL;
+    *hunk_count_out = 0;
+
+    if (mode != FILE_SELECTION_GIT_STAGED &&
+        mode != FILE_SELECTION_GIT_UNSTAGED &&
+        mode != FILE_SELECTION_GIT_DIFF) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (path_count == 0) {
+        return 0;
+    }
+
+    hunks = calloc(path_count, sizeof(*hunks));
+    if (!hunks) {
+        return -1;
+    }
+
+    if (derive_repo_root_from_selected_paths(paths, path_count, &repo_root) != 0) {
+        goto cleanup;
+    }
+
+    for (size_t i = 0; i < path_count; i++) {
+        const char* args[GIT_HUNK_ARGS_MAX];
+        unsigned char* output = NULL;
+        size_t output_len = 0;
+        int exit_status = 0;
+        int exec_errno = 0;
+
+        if (paths[i].change_type == SELECTED_PATH_CHANGE_ADDED) {
+            continue;
+        }
+        if (!paths[i].repo_rel_path) {
+            errno = EINVAL;
+            goto cleanup;
+        }
+        if (build_git_hunk_args(repo_root,
+                                mode,
+                                diff_range,
+                                &paths[i],
+                                paths[i].repo_rel_path,
+                                args,
+                                GIT_HUNK_ARGS_MAX) != 0) {
+            goto cleanup;
+        }
+        if (run_command_capture(args, 0, &output, &output_len, &exit_status, &exec_errno) != 0) {
+            perror("Error running git");
+            free(output);
+            goto cleanup;
+        }
+        if (exec_errno != 0) {
+            errno = exec_errno;
+            perror("Error executing git");
+            free(output);
+            goto cleanup;
+        }
+        if (!WIFEXITED(exit_status) || WEXITSTATUS(exit_status) != 0) {
+            fprintf(stderr, "git diff failed while collecting hunks for %s\n", paths[i].display_path);
+            free(output);
+            goto cleanup;
+        }
+        if (parse_hunk_ranges_from_diff_output(output, output_len, &hunks[i]) != 0) {
+            free(output);
+            goto cleanup;
+        }
+        free(output);
+    }
+
+    *hunks_out = hunks;
+    *hunk_count_out = path_count;
+    hunks = NULL;
+    status = 0;
+
+cleanup:
+    free(repo_root);
+    free_git_hunks(hunks, path_count);
+    return status;
+}
+
 int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_size) {
     char cwd[MAX_PATH_LENGTH];
     char* repo_root = NULL;
@@ -897,4 +1301,15 @@ int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_
 
     free(repo_root);
     return 0;
+}
+
+void free_git_hunks(GitFileHunks* hunks, size_t count) {
+    if (!hunks) {
+        return;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        free(hunks[i].ranges);
+    }
+    free(hunks);
 }
