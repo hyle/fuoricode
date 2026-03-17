@@ -207,20 +207,9 @@ static int ends_with_ignore_case(const char* text, const char* suffix) {
     return equals_ignore_case(text + text_len - suffix_len, suffix);
 }
 
-static int is_sensitive_basename_match(const char* basename,
-                                       const char* prefix,
-                                       int allow_dot_suffix) {
-    size_t prefix_len;
-
+static int is_sensitive_basename_prefix(const char* basename, const char* prefix) {
     if (!basename || !prefix) return 0;
-    if (!starts_with_ignore_case(basename, prefix)) {
-        return 0;
-    }
-    prefix_len = strlen(prefix);
-    if (basename[prefix_len] == '\0') {
-        return 1;
-    }
-    return allow_dot_suffix && basename[prefix_len] == '.';
+    return starts_with_ignore_case(basename, prefix);
 }
 
 static int is_sensitive_filename(const char* filepath) {
@@ -234,16 +223,15 @@ static int is_sensitive_filename(const char* filepath) {
         basename = slash + 1;
     }
 
-    if (equals_ignore_case(basename, ".env") ||
-        starts_with_ignore_case(basename, ".env.") ||
-        is_sensitive_basename_match(basename, "credential", 1) ||
-        is_sensitive_basename_match(basename, "credentials", 1) ||
-        is_sensitive_basename_match(basename, "secret", 1) ||
-        is_sensitive_basename_match(basename, "secrets", 1) ||
-        is_sensitive_basename_match(basename, "id_rsa", 1) ||
-        is_sensitive_basename_match(basename, "id_dsa", 1) ||
-        is_sensitive_basename_match(basename, "id_ecdsa", 1) ||
-        is_sensitive_basename_match(basename, "id_ed25519", 1) ||
+    if (is_sensitive_basename_prefix(basename, ".env") ||
+        is_sensitive_basename_prefix(basename, "credential") ||
+        is_sensitive_basename_prefix(basename, "credentials") ||
+        is_sensitive_basename_prefix(basename, "secret") ||
+        is_sensitive_basename_prefix(basename, "secrets") ||
+        is_sensitive_basename_prefix(basename, "id_rsa") ||
+        is_sensitive_basename_prefix(basename, "id_dsa") ||
+        is_sensitive_basename_prefix(basename, "id_ecdsa") ||
+        is_sensitive_basename_prefix(basename, "id_ed25519") ||
         ends_with_ignore_case(basename, ".pem") ||
         ends_with_ignore_case(basename, ".key")) {
         return 1;
@@ -775,6 +763,11 @@ static int collect_recursive_paths(const char* base_path,
 
     dir = opendir(base_path);
     if (!dir) {
+        if (strcmp(base_path, ".") != 0 &&
+            (errno == EACCES || errno == EPERM)) {
+            fprintf(stderr, "Warning: Failed to process directory %s\n", base_path);
+            return 0;
+        }
         perror("Error opening directory");
         return -1;
     }
