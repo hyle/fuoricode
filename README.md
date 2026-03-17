@@ -108,6 +108,7 @@ fuori [OPTIONS]
 | `--allow-sensitive` | Export files even if they match sensitive-file protection rules |
 
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
+`--no-default-ignore` only applies to filesystem selection.
 
 **Examples:**
 
