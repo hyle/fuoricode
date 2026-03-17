@@ -246,11 +246,13 @@ EOF_PERM_MAIN
 cat >"$PERM_DIR/private.txt" <<'EOF_PERM_PRIVATE'
 secret
 EOF_PERM_PRIVATE
-chmod 000 "$PERM_DIR/private.txt"
-(cd "$PERM_DIR" && "$BIN" -o - >permission_stdout.txt 2>permission_stderr.txt)
-assert_contains "$PERM_DIR/permission_stdout.txt" "## main.c"
-assert_not_contains "$PERM_DIR/permission_stdout.txt" "private.txt"
-assert_contains "$PERM_DIR/permission_stderr.txt" "Warning: Failed to process file ./private.txt"
+if [ "$(id -u)" -ne 0 ]; then
+    chmod 000 "$PERM_DIR/private.txt"
+    (cd "$PERM_DIR" && "$BIN" -o - >permission_stdout.txt 2>permission_stderr.txt)
+    assert_contains "$PERM_DIR/permission_stdout.txt" "## main.c"
+    assert_not_contains "$PERM_DIR/permission_stdout.txt" "private.txt"
+    assert_contains "$PERM_DIR/permission_stderr.txt" "Warning: Failed to process file ./private.txt"
+fi
 
 ODD_DIR="$TMPDIR/odd_paths"
 mkdir -p "$ODD_DIR"
