@@ -15,9 +15,21 @@ typedef enum {
 typedef struct {
     char* open_path;
     char* display_path;
+    char* repo_rel_path;
     SelectedPathChangeType change_type;
     char* previous_display_path;
+    char* previous_repo_rel_path;
 } SelectedPath;
+
+typedef struct {
+    size_t new_start;
+    size_t new_count;
+} GitHunkRange;
+
+typedef struct {
+    GitHunkRange* ranges;
+    size_t count;
+} GitFileHunks;
 
 typedef enum {
     GIT_PATHS_COLLECTED = 0,
@@ -33,7 +45,14 @@ int collect_git_paths(FileSelectionMode mode,
 int collect_stdin_paths(int null_delim,
                         SelectedPath** paths_out,
                         size_t* count_out);
+int collect_git_hunks(FileSelectionMode mode,
+                      const char* diff_range,
+                      const SelectedPath* paths,
+                      size_t path_count,
+                      GitFileHunks** hunks_out,
+                      size_t* hunk_count_out);
 int resolve_repository_name(FileSelectionMode mode, char* buffer, size_t buffer_size);
+void free_git_hunks(GitFileHunks* hunks, size_t count);
 void free_selected_paths(SelectedPath* paths, size_t count);
 
 #endif

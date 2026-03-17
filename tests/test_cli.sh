@@ -66,6 +66,7 @@ trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
 (cd "$BIN_DIR" && "$BIN" --help >"$TMPDIR/help_stdout.txt" 2>"$TMPDIR/help_stderr.txt")
 assert_contains "$TMPDIR/help_stdout.txt" "--allow-sensitive"
+assert_contains "$TMPDIR/help_stdout.txt" "--hunks"
 assert_contains "$TMPDIR/help_stdout.txt" "--line-numbers"
 assert_contains "$TMPDIR/help_stdout.txt" "--no-default-ignore"
 assert_file_equals "$TMPDIR/help_stderr.txt" ""
@@ -418,6 +419,11 @@ if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --no-default-ign
 fi
 assert_contains "$STDIN_DIR/stdin_conflict_no_default_ignore.txt" "--no-default-ignore can only be used with filesystem selection"
 
+if printf 'alpha.c\n' | (cd "$STDIN_DIR" && "$BIN" --from-stdin --hunks >/dev/null 2>stdin_conflict_hunks.txt); then
+    fail "expected --from-stdin --hunks to fail"
+fi
+assert_contains "$STDIN_DIR/stdin_conflict_hunks.txt" "--hunks can only be used with --staged, --unstaged, or --diff"
+
 if (cd "$STDIN_DIR" && "$BIN" -0 >/dev/null 2>stdin_null_without_mode_stderr.txt); then
     fail "expected -0 without --from-stdin to fail"
 fi
@@ -517,6 +523,21 @@ if (cd "$REPO" && "$BIN" --staged --no-default-ignore >/dev/null 2>stderr_no_def
 fi
 assert_contains "$REPO/stderr_no_default_ignore_invalid.txt" "--no-default-ignore can only be used with filesystem selection"
 
+if (cd "$REPO" && "$BIN" --hunks >/dev/null 2>stderr_hunks_default_invalid.txt); then
+    fail "expected bare --hunks to fail"
+fi
+assert_contains "$REPO/stderr_hunks_default_invalid.txt" "--hunks can only be used with --staged, --unstaged, or --diff"
+
+if (cd "$REPO" && "$BIN" --no-git --hunks >/dev/null 2>stderr_hunks_no_git_invalid.txt); then
+    fail "expected --no-git --hunks to fail"
+fi
+assert_contains "$REPO/stderr_hunks_no_git_invalid.txt" "--hunks can only be used with --staged, --unstaged, or --diff"
+
+if (cd "$REPO" && "$BIN" --staged --hunks=-1 >/dev/null 2>stderr_hunks_negative_invalid.txt); then
+    fail "expected --staged --hunks=-1 to fail"
+fi
+assert_contains "$REPO/stderr_hunks_negative_invalid.txt" "Invalid hunk context value: -1"
+
 STAGED_REPO="$TMPDIR/staged_repo"
 mkdir -p "$STAGED_REPO"
 (cd "$STAGED_REPO" && git init -q)
@@ -562,6 +583,107 @@ assert_contains "$STAGED_REPO/unstaged_stdout.txt" "Files changed: 1"
 assert_contains "$STAGED_REPO/unstaged_stdout.txt" "- M beta.c"
 assert_contains "$STAGED_REPO/unstaged_stdout.txt" "## beta.c"
 assert_not_contains "$STAGED_REPO/unstaged_stdout.txt" "- A added.c"
+
+HUNKS_REPO="$TMPDIR/hunks_repo"
+mkdir -p "$HUNKS_REPO/sub"
+(cd "$HUNKS_REPO" && git init -q)
+awk 'BEGIN { for (i = 1; i <= 20; i++) printf "int line%d(void) { return %d; }\n", i, i; }' >"$HUNKS_REPO/review.c"
+cat >"$HUNKS_REPO/rename_only.c" <<'EOF_HUNKS_RENAME_ONLY'
+int rename_only(void) { return 1; }
+EOF_HUNKS_RENAME_ONLY
+cat >"$HUNKS_REPO/mode_only.sh" <<'EOF_HUNKS_MODE_ONLY'
+echo one
+echo two
+EOF_HUNKS_MODE_ONLY
+cat >"$HUNKS_REPO/delete_context.c" <<'EOF_HUNKS_DELETE_BASE'
+one
+two
+three
+four
+five
+EOF_HUNKS_DELETE_BASE
+cat >"$HUNKS_REPO/small.c" <<'EOF_HUNKS_SMALL_BASE'
+int small_one(void) { return 1; }
+int small_two(void) { return 2; }
+int small_three(void) { return 3; }
+EOF_HUNKS_SMALL_BASE
+cat >"$HUNKS_REPO/sub/nested.c" <<'EOF_HUNKS_NESTED_BASE'
+int nested_one(void) { return 1; }
+int nested_two(void) { return 2; }
+int nested_three(void) { return 3; }
+int nested_four(void) { return 4; }
+EOF_HUNKS_NESTED_BASE
+(cd "$HUNKS_REPO" && git add review.c rename_only.c mode_only.sh delete_context.c small.c sub/nested.c && \
+    git -c user.name='fuori tests' -c user.email='fuori@example.com' commit -qm base)
+awk 'BEGIN { for (i = 1; i <= 20; i++) { if (i == 2) v = 20; else if (i == 18) v = 180; else v = i; printf "int line%d(void) { return %d; }\n", i, v; } }' >"$HUNKS_REPO/review.c"
+(cd "$HUNKS_REPO" && git add review.c)
+(cd "$HUNKS_REPO" && git mv rename_only.c renamed_only.c)
+chmod +x "$HUNKS_REPO/mode_only.sh"
+(cd "$HUNKS_REPO" && git add mode_only.sh)
+cat >"$HUNKS_REPO/delete_context.c" <<'EOF_HUNKS_DELETE_MOD'
+one
+two
+four
+five
+EOF_HUNKS_DELETE_MOD
+(cd "$HUNKS_REPO" && git add delete_context.c)
+cat >"$HUNKS_REPO/small.c" <<'EOF_HUNKS_SMALL_MOD'
+int small_one(void) { return 1; }
+int small_two(void) { return 20; }
+int small_three(void) { return 3; }
+EOF_HUNKS_SMALL_MOD
+(cd "$HUNKS_REPO" && git add small.c)
+cat >"$HUNKS_REPO/added.c" <<'EOF_HUNKS_ADDED'
+int added(void) { return 99; }
+EOF_HUNKS_ADDED
+(cd "$HUNKS_REPO" && git add added.c)
+cat >"$HUNKS_REPO/sub/nested.c" <<'EOF_HUNKS_NESTED_MOD'
+int nested_one(void) { return 1; }
+int nested_two(void) { return 20; }
+int nested_three(void) { return 3; }
+int nested_four(void) { return 4; }
+EOF_HUNKS_NESTED_MOD
+(cd "$HUNKS_REPO" && git add sub/nested.c)
+
+(cd "$HUNKS_REPO" && "$BIN" --staged --hunks=0 --line-numbers --no-tree -o - >hunks_zero_stdout.txt 2>hunks_zero_stderr.txt)
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "Line numbers: on"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "Hunks: on (context: 0)"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "## review.c"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "2 | int line2(void) { return 20; }"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "18 | int line18(void) { return 180; }"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "... 15 unchanged lines omitted ..."
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "- R rename_only.c -> renamed_only.c"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "- M mode_only.sh"
+assert_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "## added.c"
+assert_not_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "## renamed_only.c"
+assert_not_contains "$HUNKS_REPO/hunks_zero_stdout.txt" "## mode_only.sh"
+
+(cd "$HUNKS_REPO" && "$BIN" --staged --hunks=1 --no-tree -o - >hunks_context_stdout.txt 2>hunks_context_stderr.txt)
+awk '/^## delete_context.c$/{flag=1; next} /^## /{flag=0} flag { print }' "$HUNKS_REPO/hunks_context_stdout.txt" >"$HUNKS_REPO/delete_context_section.txt"
+assert_contains "$HUNKS_REPO/delete_context_section.txt" "one"
+assert_contains "$HUNKS_REPO/delete_context_section.txt" "two"
+assert_contains "$HUNKS_REPO/delete_context_section.txt" "four"
+assert_not_contains "$HUNKS_REPO/delete_context_section.txt" "three"
+
+(cd "$HUNKS_REPO" && "$BIN" --staged --hunks=10 --no-tree -o - >hunks_wide_stdout.txt 2>hunks_wide_stderr.txt)
+awk '/^## small.c$/{flag=1; next} /^## /{flag=0} flag { print }' "$HUNKS_REPO/hunks_wide_stdout.txt" >"$HUNKS_REPO/small_section.txt"
+assert_contains "$HUNKS_REPO/small_section.txt" "int small_one(void) { return 1; }"
+assert_contains "$HUNKS_REPO/small_section.txt" "int small_two(void) { return 20; }"
+assert_contains "$HUNKS_REPO/small_section.txt" "int small_three(void) { return 3; }"
+assert_not_contains "$HUNKS_REPO/small_section.txt" "unchanged lines omitted"
+
+(cd "$HUNKS_REPO" && "$BIN" --staged --hunks -o - >hunks_tree_stdout.txt 2>hunks_tree_stderr.txt)
+assert_contains "$HUNKS_REPO/hunks_tree_stdout.txt" "## Project Tree"
+assert_contains "$HUNKS_REPO/hunks_tree_stdout.txt" "├── added.c"
+assert_contains "$HUNKS_REPO/hunks_tree_stdout.txt" "├── delete_context.c"
+assert_contains "$HUNKS_REPO/hunks_tree_stdout.txt" "├── review.c"
+assert_not_contains "$HUNKS_REPO/hunks_tree_stdout.txt" "└── renamed_only.c"
+assert_not_contains "$HUNKS_REPO/hunks_tree_stdout.txt" "└── mode_only.sh"
+
+(cd "$HUNKS_REPO/sub" && "$BIN" --staged --hunks --no-tree -o - >nested_hunks_stdout.txt 2>nested_hunks_stderr.txt)
+assert_contains "$HUNKS_REPO/sub/nested_hunks_stdout.txt" "## nested.c"
+assert_contains "$HUNKS_REPO/sub/nested_hunks_stdout.txt" "nested_two"
+assert_not_contains "$HUNKS_REPO/sub/nested_hunks_stdout.txt" "## review.c"
 
 SENSITIVE_STAGED_REPO="$TMPDIR/sensitive_staged_repo"
 mkdir -p "$SENSITIVE_STAGED_REPO"

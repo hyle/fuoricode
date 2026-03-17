@@ -97,6 +97,7 @@ fuori [OPTIONS]
 | `--from-stdin` | Read paths from stdin |
 | `-0`, `--null` | Use NUL as the stdin delimiter (requires `--from-stdin`) |
 | `--line-numbers` | Prefix exported code lines with line numbers |
+| `--hunks [<n>]` | In Git delta modes, export only changed hunks plus context lines |
 | `--tree` / `--no-tree` | Include/omit project tree (default: on) |
 | `--tree-depth <n>` | Limit tree render depth |
 | `-s <size_kb>` | Max file size in KB (default: 100) |
@@ -109,6 +110,7 @@ fuori [OPTIONS]
 
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 `--no-default-ignore` only applies to filesystem selection.
+`--hunks` only applies to `--staged`, `--unstaged`, and `--diff`.
 
 **Examples:**
 
@@ -118,6 +120,8 @@ fuori --unstaged                   # Export unstaged changes
 fuori --staged -o review.md        # Staged changes to a named file
 fuori --diff HEAD~3..HEAD          # Files changed in the last 3 commits
 fuori --diff main...HEAD           # Changes since branching from main
+fuori --staged --hunks             # Only changed hunks with default context
+fuori --diff main...HEAD --hunks=8 # Wider hunk context for review
 fuori -o - > codebase.md           # Pipe to stdout
 fuori --no-tree                    # Skip the project tree section
 fuori --tree-depth 2               # Shallow tree
@@ -196,6 +200,9 @@ Additional semantics:
 - `--unstaged` does not include untracked files
 - Renamed files are exported under the current path reported by Git
 - `--staged`, `--unstaged`, and `--diff` include a `Change Context` section with change status summaries
+- `--hunks[=N]` narrows Git delta exports to changed hunks plus `N` lines of surrounding context (`3` by default)
+- Added files still export as full files under `--hunks`
+- Delta entries with no renderable changed-line ranges stay in `Change Context` but omit file bodies and tree entries under `--hunks`
 - If Git selects no files, `fuori` still succeeds and writes an empty export
 
 ## Stdin File Selection
@@ -254,12 +261,12 @@ Sensitive files are skipped by default unless `--allow-sensitive` is set.
 
 The output markdown file will contain:
 
-1. A preamble with repository, mode, and generation timestamp metadata, plus `Line numbers: on` when enabled, and a short mode description
+1. A preamble with repository, mode, and generation timestamp metadata, plus `Line numbers: on` and `Hunks: on (context: N)` when enabled, and a short mode description
 2. A `Change Context` section for `--staged`, `--unstaged`, and `--diff` exports
 3. A project tree section that reflects the exported artifact (enabled by default)
 4. A header with the file path
-5. A code block with the file content
-6. Optional line-number prefixes inside code blocks when `--line-numbers` is set
+5. Either a full-file code block or one or more hunk slices separated by omission markers such as `... 84 unchanged lines omitted ...`
+6. Optional line-number prefixes inside code blocks when `--line-numbers` is set; hunk exports keep original file line numbers
 7. Appropriate language identifiers for syntax highlighting
 8. A `stderr` summary of files, bytes, and estimated tokens after successful completion
 

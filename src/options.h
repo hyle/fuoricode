@@ -13,9 +13,11 @@ typedef struct {
     int stdin_null_delim;
     int show_tree;
     int show_line_numbers;
+    int show_hunks;
     int no_default_ignore;
     int allow_sensitive;
     size_t max_file_size;
+    size_t hunk_context_lines;
     size_t tree_depth;
     size_t warn_tokens;
     size_t max_tokens;

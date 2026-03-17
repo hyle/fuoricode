@@ -32,6 +32,36 @@ static int parse_positive_size_value(const char* value,
     return 0;
 }
 
+static int parse_nonnegative_size_value(const char* value,
+                                        const char* label,
+                                        size_t max_value,
+                                        size_t* out) {
+    char* endptr;
+    unsigned long long parsed;
+
+    if (!value || !out) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (value[0] == '+' || value[0] == '-') {
+        fprintf(stderr, "Invalid %s value: %s\n", label, value);
+        fprintf(stderr, "Use -h or --help for usage information\n");
+        return -1;
+    }
+
+    errno = 0;
+    parsed = strtoull(value, &endptr, 10);
+    if (*value == '\0' || *endptr != '\0' ||
+        errno == ERANGE || parsed > max_value) {
+        fprintf(stderr, "Invalid %s value: %s\n", label, value);
+        fprintf(stderr, "Use -h or --help for usage information\n");
+        return -1;
+    }
+
+    *out = (size_t)parsed;
+    return 0;
+}
+
 static void print_selection_mode_conflict(void) {
     fprintf(stderr, "--from-stdin, --staged, --unstaged, and --diff are mutually exclusive\n");
     fprintf(stderr, "Use -h or --help for usage information\n");
@@ -39,6 +69,11 @@ static void print_selection_mode_conflict(void) {
 
 static void print_no_default_ignore_conflict(void) {
     fprintf(stderr, "--no-default-ignore can only be used with filesystem selection\n");
+    fprintf(stderr, "Use -h or --help for usage information\n");
+}
+
+static void print_hunks_conflict(void) {
+    fprintf(stderr, "--hunks can only be used with --staged, --unstaged, or --diff\n");
     fprintf(stderr, "Use -h or --help for usage information\n");
 }
 
@@ -52,6 +87,7 @@ void init_cli_options(CliOptions* options) {
     options->show_tree = 1;
     options->tree_depth = SIZE_MAX;
     options->warn_tokens = DEFAULT_WARN_TOKENS;
+    options->hunk_context_lines = 3;
     options->output_path = DEFAULT_OUTPUT_FILE;
     options->requested_mode = FILE_SELECTION_AUTO;
     options->resolved_mode = FILE_SELECTION_RECURSIVE;
@@ -73,6 +109,7 @@ void print_usage(const char* argv0) {
     printf("                      --from-stdin, --staged, --unstaged, and --diff are mutually exclusive\n");
     printf("  -0, --null          Use NUL as the input record delimiter instead of newline (requires --from-stdin)\n");
     printf("      --line-numbers  Prefix exported code lines with line numbers\n");
+    printf("      --hunks[=N]     Export only changed hunks with N context lines (default: 3)\n");
     printf("      --tree          Include a directory tree section (default)\n");
     printf("      --no-tree       Omit the directory tree section\n");
     printf("      --tree-depth    Limit tree rendering depth to N levels\n");
@@ -156,6 +193,25 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->show_tree = 0;
         } else if (strcmp(argv[i], "--line-numbers") == 0) {
             options->show_line_numbers = 1;
+        } else if (strcmp(argv[i], "--hunks") == 0) {
+            options->show_hunks = 1;
+            options->hunk_context_lines = 3;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                if (parse_nonnegative_size_value(argv[++i],
+                                                 "hunk context",
+                                                 SIZE_MAX,
+                                                 &options->hunk_context_lines) != 0) {
+                    return -1;
+                }
+            }
+        } else if (strncmp(argv[i], "--hunks=", 8) == 0) {
+            options->show_hunks = 1;
+            if (parse_nonnegative_size_value(argv[i] + 8,
+                                             "hunk context",
+                                             SIZE_MAX,
+                                             &options->hunk_context_lines) != 0) {
+                return -1;
+            }
         } else if (strcmp(argv[i], "--tree-depth") == 0) {
             if (i + 1 < argc) {
                 if (parse_positive_size_value(argv[++i], "tree depth", SIZE_MAX, &options->tree_depth) != 0) {
@@ -265,6 +321,15 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
          options->requested_mode == FILE_SELECTION_GIT_UNSTAGED ||
          options->requested_mode == FILE_SELECTION_GIT_DIFF)) {
         print_no_default_ignore_conflict();
+        return -1;
+    }
+
+    if (options->show_hunks &&
+        (options->requested_mode == FILE_SELECTION_AUTO ||
+         options->requested_mode == FILE_SELECTION_RECURSIVE ||
+         options->requested_mode == FILE_SELECTION_GIT_WORKTREE ||
+         options->requested_mode == FILE_SELECTION_STDIN)) {
+        print_hunks_conflict();
         return -1;
     }
 
