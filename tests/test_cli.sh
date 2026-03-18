@@ -143,37 +143,68 @@ EOF_SENSITIVE_NAME_MAIN
 cat >"$SENSITIVE_NAME_DIR/credentials.txt" <<'EOF_SENSITIVE_NAME_SECRET'
 plain text but sensitive by filename
 EOF_SENSITIVE_NAME_SECRET
+cat >"$SENSITIVE_NAME_DIR/credential.txt" <<'EOF_SENSITIVE_NAME_CREDENTIAL'
+plain text but sensitive by exact singular filename
+EOF_SENSITIVE_NAME_CREDENTIAL
+cat >"$SENSITIVE_NAME_DIR/.env.local" <<'EOF_SENSITIVE_NAME_ENV'
+export TOKEN=1
+EOF_SENSITIVE_NAME_ENV
+cat >"$SENSITIVE_NAME_DIR/secret.txt" <<'EOF_SENSITIVE_NAME_SECRET_FILE'
+backup secret
+EOF_SENSITIVE_NAME_SECRET_FILE
+cat >"$SENSITIVE_NAME_DIR/secrets.json" <<'EOF_SENSITIVE_NAME_SECRETS_FILE'
+several secrets
+EOF_SENSITIVE_NAME_SECRETS_FILE
+cat >"$SENSITIVE_NAME_DIR/id_dsa" <<'EOF_SENSITIVE_NAME_ID_DSA'
+backup ssh key
+EOF_SENSITIVE_NAME_ID_DSA
 cat >"$SENSITIVE_NAME_DIR/.envrc" <<'EOF_SENSITIVE_NAME_ENVRC'
 export TOKEN=1
 EOF_SENSITIVE_NAME_ENVRC
 cat >"$SENSITIVE_NAME_DIR/credentials-prod.txt" <<'EOF_SENSITIVE_NAME_CREDENTIALS_DASH'
 prod credentials
 EOF_SENSITIVE_NAME_CREDENTIALS_DASH
-cat >"$SENSITIVE_NAME_DIR/secret_backup" <<'EOF_SENSITIVE_NAME_SECRET_BACKUP'
-backup secret
-EOF_SENSITIVE_NAME_SECRET_BACKUP
+cat >"$SENSITIVE_NAME_DIR/credentials-guide.md" <<'EOF_SENSITIVE_NAME_CREDENTIALS_GUIDE'
+how to rotate credentials
+EOF_SENSITIVE_NAME_CREDENTIALS_GUIDE
+cat >"$SENSITIVE_NAME_DIR/secretary_notes.md" <<'EOF_SENSITIVE_NAME_SECRETARY'
+meeting notes
+EOF_SENSITIVE_NAME_SECRETARY
 cat >"$SENSITIVE_NAME_DIR/id_rsa_backup" <<'EOF_SENSITIVE_NAME_ID_RSA_BACKUP'
 backup ssh key
 EOF_SENSITIVE_NAME_ID_RSA_BACKUP
 (cd "$SENSITIVE_NAME_DIR" && "$BIN" --no-git -o - >sensitive_name_stdout.txt 2>"$TMPDIR/sensitive_name_stderr.txt")
 assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## main.c"
 assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "credentials.txt"
-assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" ".envrc"
-assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "credentials-prod.txt"
-assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "secret_backup"
-assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "id_rsa_backup"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## credential.txt"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## .env.local"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## secret.txt"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## secrets.json"
+assert_not_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## id_dsa"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## .envrc"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## credentials-prod.txt"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## credentials-guide.md"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## secretary_notes.md"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_stdout.txt" "## id_rsa_backup"
 assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials.txt"
-assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./.envrc"
-assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials-prod.txt"
-assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./secret_backup"
-assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./id_rsa_backup"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credential.txt"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./.env.local"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./secret.txt"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./secrets.json"
+assert_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./id_dsa"
+assert_not_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./.envrc"
+assert_not_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials-prod.txt"
+assert_not_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./credentials-guide.md"
+assert_not_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./secretary_notes.md"
+assert_not_contains "$TMPDIR/sensitive_name_stderr.txt" "Warning: Skipping sensitive file ./id_rsa_backup"
 
 (cd "$SENSITIVE_NAME_DIR" && "$BIN" --no-git --allow-sensitive -o - >sensitive_name_allow_stdout.txt 2>"$TMPDIR/sensitive_name_allow_stderr.txt")
 assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## credentials.txt"
-assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## .envrc"
-assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## credentials-prod.txt"
-assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## secret_backup"
-assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## id_rsa_backup"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## credential.txt"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## .env.local"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## secret.txt"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## secrets.json"
+assert_contains "$SENSITIVE_NAME_DIR/sensitive_name_allow_stdout.txt" "## id_dsa"
 assert_not_contains "$TMPDIR/sensitive_name_allow_stderr.txt" "Warning: Skipping sensitive file"
 
 SENSITIVE_CONTENT_DIR="$TMPDIR/sensitive_content"
@@ -181,17 +212,34 @@ mkdir -p "$SENSITIVE_CONTENT_DIR"
 cat >"$SENSITIVE_CONTENT_DIR/main.c" <<'EOF_SENSITIVE_CONTENT_MAIN'
 int main(void) { return 0; }
 EOF_SENSITIVE_CONTENT_MAIN
-cat >"$SENSITIVE_CONTENT_DIR/notes.txt" <<'EOF_SENSITIVE_CONTENT_SECRET'
+cat >"$SENSITIVE_CONTENT_DIR/example.txt" <<'EOF_SENSITIVE_CONTENT_SHORT_TOKEN'
 api_key=sk-abcdefghijklmnopqrstuvwxyz123456
-EOF_SENSITIVE_CONTENT_SECRET
+EOF_SENSITIVE_CONTENT_SHORT_TOKEN
+cat >"$SENSITIVE_CONTENT_DIR/detector.c" <<'EOF_SENSITIVE_CONTENT_MARKER_LITERAL'
+const char* marker = "-----BEGIN PRIVATE KEY-----";
+EOF_SENSITIVE_CONTENT_MARKER_LITERAL
+cat >"$SENSITIVE_CONTENT_DIR/private_key.txt" <<'EOF_SENSITIVE_CONTENT_PEM'
+-----BEGIN PRIVATE KEY-----
+YWJjZGVmZw==
+-----END PRIVATE KEY-----
+EOF_SENSITIVE_CONTENT_PEM
+cat >"$SENSITIVE_CONTENT_DIR/openai.txt" <<'EOF_SENSITIVE_CONTENT_LONG_TOKEN'
+sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+EOF_SENSITIVE_CONTENT_LONG_TOKEN
 (cd "$SENSITIVE_CONTENT_DIR" && "$BIN" --no-git -o - >sensitive_content_stdout.txt 2>"$TMPDIR/sensitive_content_stderr.txt")
 assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## main.c"
-assert_not_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## notes.txt"
-assert_contains "$TMPDIR/sensitive_content_stderr.txt" "Warning: Skipping sensitive file ./notes.txt"
-assert_not_contains "$TMPDIR/sensitive_content_stderr.txt" "sk-abcdefghijklmnopqrstuvwxyz123456"
+assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## example.txt"
+assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## detector.c"
+assert_not_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## private_key.txt"
+assert_not_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_stdout.txt" "## openai.txt"
+assert_contains "$TMPDIR/sensitive_content_stderr.txt" "Warning: Skipping sensitive file ./private_key.txt"
+assert_contains "$TMPDIR/sensitive_content_stderr.txt" "Warning: Skipping sensitive file ./openai.txt"
+assert_not_contains "$TMPDIR/sensitive_content_stderr.txt" "Warning: Skipping sensitive file ./example.txt"
+assert_not_contains "$TMPDIR/sensitive_content_stderr.txt" "Warning: Skipping sensitive file ./detector.c"
 
 (cd "$SENSITIVE_CONTENT_DIR" && "$BIN" --no-git --allow-sensitive -o - >sensitive_content_allow_stdout.txt 2>"$TMPDIR/sensitive_content_allow_stderr.txt")
-assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_allow_stdout.txt" "## notes.txt"
+assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_allow_stdout.txt" "## private_key.txt"
+assert_contains "$SENSITIVE_CONTENT_DIR/sensitive_content_allow_stdout.txt" "## openai.txt"
 assert_not_contains "$TMPDIR/sensitive_content_allow_stderr.txt" "Warning: Skipping sensitive file"
 
 (cd "$OUTSIDE" && "$BIN" -v -o verbose_export.md >verbose_file_stdout.txt 2>verbose_file_stderr.txt)
@@ -522,6 +570,11 @@ if (cd "$REPO" && "$BIN" --staged --no-default-ignore >/dev/null 2>stderr_no_def
     fail "expected --staged --no-default-ignore to fail"
 fi
 assert_contains "$REPO/stderr_no_default_ignore_invalid.txt" "--no-default-ignore can only be used with filesystem selection"
+
+if (cd "$REPO" && "$BIN" --no-default-ignore >/dev/null 2>stderr_no_default_ignore_auto_invalid.txt); then
+    fail "expected auto-mode --no-default-ignore in git repo to fail"
+fi
+assert_contains "$REPO/stderr_no_default_ignore_auto_invalid.txt" "--no-default-ignore can only be used with filesystem selection"
 
 if (cd "$REPO" && "$BIN" --hunks >/dev/null 2>stderr_hunks_default_invalid.txt); then
     fail "expected bare --hunks to fail"

@@ -363,3 +363,18 @@ int resolve_cli_selection(CliOptions* options,
                              selected_count_out,
                              &git_result);
 }
+
+int validate_resolved_cli_options(const CliOptions* options) {
+    if (!options) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (options->no_default_ignore &&
+        options->resolved_mode != FILE_SELECTION_RECURSIVE) {
+        print_no_default_ignore_conflict();
+        return -1;
+    }
+
+    return 0;
+}

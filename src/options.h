@@ -33,5 +33,6 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options);
 int resolve_cli_selection(CliOptions* options,
                           SelectedPath** selected_paths_out,
                           size_t* selected_count_out);
+int validate_resolved_cli_options(const CliOptions* options);
 
 #endif
