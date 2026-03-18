@@ -270,6 +270,9 @@ int main(int argc, char* argv[]) {
     if (resolve_cli_selection(&options, &selected_paths, &selected_count) != 0) {
         goto cleanup;
     }
+    if (validate_resolved_cli_options(&options) != 0) {
+        goto cleanup;
+    }
 
     ctx.verbose = options.verbose;
     ctx.no_clobber = options.no_clobber;

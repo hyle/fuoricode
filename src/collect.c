@@ -277,6 +277,12 @@ static int read_file_buffer(const char* filepath,
                             size_t max_file_size,
                             unsigned char** buffer_out,
                             size_t* bytes_read_out) {
+    enum {
+        READ_FILE_ERROR = -1,
+        READ_FILE_OK = 0,
+        READ_FILE_TOO_LARGE = 1,
+        READ_FILE_CHANGED = 2
+    };
     int fd = -1;
     FILE* file = NULL;
     unsigned char* buffer = NULL;
@@ -293,7 +299,7 @@ static int read_file_buffer(const char* filepath,
     if (st->st_size < 0) {
         errno = EINVAL;
         perror("Invalid file size");
-        return -1;
+        return READ_FILE_ERROR;
     }
 
     int open_flags = O_RDONLY;
@@ -303,41 +309,39 @@ static int read_file_buffer(const char* filepath,
     fd = open(filepath, open_flags);
     if (fd == -1) {
         perror("Error opening file");
-        return -1;
+        return READ_FILE_ERROR;
     }
     if (fstat(fd, &opened_st) == -1) {
         close(fd);
         perror("Error stating opened file");
-        return -1;
+        return READ_FILE_ERROR;
     }
     if (!S_ISREG(opened_st.st_mode)) {
         close(fd);
         errno = EINVAL;
         perror("Opened path is not a regular file");
-        return -1;
+        return READ_FILE_ERROR;
     }
     if (opened_st.st_dev != st->st_dev || opened_st.st_ino != st->st_ino) {
         close(fd);
-        errno = EAGAIN;
-        perror("File changed while being processed");
-        return -1;
+        return READ_FILE_CHANGED;
     }
     if (opened_st.st_size < 0) {
         close(fd);
         errno = EINVAL;
         perror("Invalid opened file size");
-        return -1;
+        return READ_FILE_ERROR;
     }
     if ((size_t)opened_st.st_size > max_file_size) {
         close(fd);
-        return 1;
+        return READ_FILE_TOO_LARGE;
     }
 
     file = fdopen(fd, "rb");
     if (!file) {
         close(fd);
         perror("Error converting file descriptor to stream");
-        return -1;
+        return READ_FILE_ERROR;
     }
     fd = -1;
 
@@ -347,16 +351,19 @@ static int read_file_buffer(const char* filepath,
     if (!buffer) {
         fclose(file);
         perror("Error allocating memory");
-        return -1;
+        return READ_FILE_ERROR;
     }
 
     if (buffer_size > 0) {
         bytes_read = fread(buffer, 1, buffer_size, file);
-        if (bytes_read < buffer_size && ferror(file)) {
+        if (bytes_read < buffer_size) {
             free(buffer);
             fclose(file);
-            perror("Error reading file");
-            return -1;
+            if (ferror(file)) {
+                perror("Error reading file");
+                return READ_FILE_ERROR;
+            }
+            return READ_FILE_CHANGED;
         }
     }
 
@@ -366,13 +373,13 @@ static int read_file_buffer(const char* filepath,
             fclose(file);
             errno = EOVERFLOW;
             perror("File too large");
-            return -1;
+            return READ_FILE_ERROR;
         }
         size_t needed = bytes_read + extra_read;
         if (needed > max_file_size) {
             free(buffer);
             fclose(file);
-            return 1;
+            return READ_FILE_TOO_LARGE;
         }
         if (needed > buffer_capacity) {
             size_t new_capacity = buffer_capacity;
@@ -389,7 +396,7 @@ static int read_file_buffer(const char* filepath,
                 free(buffer);
                 fclose(file);
                 perror("Error growing file buffer");
-                return -1;
+                return READ_FILE_ERROR;
             }
             buffer = new_buffer;
             buffer_capacity = new_capacity;
@@ -401,17 +408,17 @@ static int read_file_buffer(const char* filepath,
         free(buffer);
         fclose(file);
         perror("Error reading file");
-        return -1;
+        return READ_FILE_ERROR;
     }
     if (fclose(file) != 0) {
         free(buffer);
         perror("Error closing file");
-        return -1;
+        return READ_FILE_ERROR;
     }
 
     *buffer_out = buffer;
     *bytes_read_out = bytes_read;
-    return 0;
+    return READ_FILE_OK;
 }
 
 static int append_export_entry(ExportPlan* plan,
@@ -523,6 +530,10 @@ static int collect_exportable_file(const char* open_path,
         if (ctx->verbose) {
             fprintf(stderr, "Skipping oversized file: %s\n", display_path);
         }
+        return 0;
+    }
+    if (read_result == 2) {
+        fprintf(stderr, "Warning: File changed while being processed %s\n", display_path);
         return 0;
     }
     if (read_result != 0) {
