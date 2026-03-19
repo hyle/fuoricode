@@ -163,6 +163,7 @@ static int run_command_capture(const char* const argv[],
     if (pid == 0) {
         int child_errno;
         int null_fd = -1;
+        size_t argc = 0;
         close(stdout_pipe[0]);
         close(error_pipe[0]);
 
@@ -186,7 +187,12 @@ static int run_command_capture(const char* const argv[],
         }
 
         close(stdout_pipe[1]);
-        execvp(argv[0], (char* const*)argv);
+        while (argv[argc] != NULL) {
+            argc++;
+        }
+        char* argv_mut[argc + 1];
+        memcpy(argv_mut, argv, (argc + 1) * sizeof(*argv_mut));
+        execvp(argv_mut[0], argv_mut);
 
         child_errno = errno;
         write(error_pipe[1], &child_errno, sizeof(child_errno));

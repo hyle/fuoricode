@@ -165,7 +165,10 @@ static int is_binary_file(const unsigned char* buffer, size_t bytes_read) {
             ctrl++;
         }
     }
-    return (ctrl * 100 / bytes_read) > 2;
+    size_t whole_hundreds = bytes_read / 100;
+    size_t remainder = bytes_read % 100;
+    size_t threshold = whole_hundreds * 3 + ((remainder * 3 + 99) / 100);
+    return ctrl >= threshold;
 }
 
 static const char* classify_shebang_interpreter(const char* name) {
@@ -242,8 +245,8 @@ static const char* detect_shebang(const unsigned char* buffer, size_t buffer_len
         interpreter = first_base;
     }
 
-    char* interp_base = strrchr(interpreter, '/');
-    interp_base = interp_base ? interp_base + 1 : (char*)interpreter;
+    const char* interp_base = strrchr(interpreter, '/');
+    interp_base = interp_base ? interp_base + 1 : interpreter;
     return classify_shebang_interpreter(interp_base);
 }
 
