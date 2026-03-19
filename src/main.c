@@ -88,6 +88,7 @@ static void print_verbose_skip_summary(const AppContext* ctx) {
     char ignored_buf[32];
     char symlink_buf[32];
     char sensitive_buf[32];
+    char unreadable_dirs_buf[32];
 
     if (!ctx || !ctx->verbose) {
         return;
@@ -97,24 +98,44 @@ static void print_verbose_skip_summary(const AppContext* ctx) {
         format_size_with_commas(ctx->skipped_too_large, large_buf, sizeof(large_buf)) != 0 ||
         format_size_with_commas(ctx->skipped_ignored, ignored_buf, sizeof(ignored_buf)) != 0 ||
         format_size_with_commas(ctx->skipped_symlink, symlink_buf, sizeof(symlink_buf)) != 0 ||
-        format_size_with_commas(ctx->skipped_sensitive, sensitive_buf, sizeof(sensitive_buf)) != 0) {
+        format_size_with_commas(ctx->skipped_sensitive, sensitive_buf, sizeof(sensitive_buf)) != 0 ||
+        format_size_with_commas(ctx->skipped_unreadable_dirs, unreadable_dirs_buf, sizeof(unreadable_dirs_buf)) != 0) {
         fprintf(stderr,
-                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu, sensitive=%zu\n",
+                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu, sensitive=%zu, unreadable_dirs=%zu\n",
                 ctx->skipped_binary,
                 ctx->skipped_too_large,
                 ctx->skipped_ignored,
                 ctx->skipped_symlink,
-                ctx->skipped_sensitive);
+                ctx->skipped_sensitive,
+                ctx->skipped_unreadable_dirs);
         return;
     }
 
     fprintf(stderr,
-            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s, sensitive=%s\n",
+            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s, sensitive=%s, unreadable_dirs=%s\n",
             binary_buf,
             large_buf,
             ignored_buf,
             symlink_buf,
-            sensitive_buf);
+            sensitive_buf,
+            unreadable_dirs_buf);
+}
+
+static void print_unreadable_directory_warning(const AppContext* ctx) {
+    char count_buf[32];
+
+    if (!ctx || ctx->skipped_unreadable_dirs == 0) {
+        return;
+    }
+    if (format_size_with_commas(ctx->skipped_unreadable_dirs, count_buf, sizeof(count_buf)) != 0) {
+        fprintf(stderr,
+                "Warning: skipped %zu unreadable directorie(s); export may be incomplete.\n",
+                ctx->skipped_unreadable_dirs);
+        return;
+    }
+    fprintf(stderr,
+            "Warning: skipped %s unreadable directorie(s); export may be incomplete.\n",
+            count_buf);
 }
 
 static int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size) {
@@ -563,6 +584,7 @@ int main(int argc, char* argv[]) {
     }
 
     print_export_summary(&metrics);
+    print_unreadable_directory_warning(&ctx);
     print_verbose_skip_summary(&ctx);
 
     status = 0;

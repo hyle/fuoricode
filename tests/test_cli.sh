@@ -354,6 +354,7 @@ if [ "$(id -u)" -ne 0 ]; then
     assert_contains "$UNREADABLE_DIR/unreadable_dir_stdout.txt" "## main.c"
     assert_not_contains "$UNREADABLE_DIR/unreadable_dir_stdout.txt" "hidden.c"
     assert_contains "$UNREADABLE_DIR/unreadable_dir_stderr.txt" "Warning: Failed to process directory ./blocked"
+    assert_contains "$UNREADABLE_DIR/unreadable_dir_stderr.txt" "Warning: skipped 1 unreadable directorie(s); export may be incomplete."
 fi
 
 ODD_DIR="$TMPDIR/odd_paths"

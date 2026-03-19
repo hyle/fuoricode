@@ -37,6 +37,7 @@ typedef struct {
     size_t skipped_ignored;
     size_t skipped_symlink;
     size_t skipped_sensitive;
+    size_t skipped_unreadable_dirs;
 } AppContext;
 
 typedef enum {

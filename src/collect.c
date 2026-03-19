@@ -598,6 +598,7 @@ static int collect_recursive_paths(const char* base_path,
     if (!dir) {
         if (strcmp(base_path, ".") != 0 &&
             (errno == EACCES || errno == EPERM)) {
+            ctx->skipped_unreadable_dirs++;
             fprintf(stderr, "Warning: Failed to process directory %s\n", base_path);
             return 0;
         }
