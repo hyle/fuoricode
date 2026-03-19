@@ -53,6 +53,11 @@ static void print_hunks_conflict(void) {
     fprintf(stderr, "Use -h or --help for usage information\n");
 }
 
+static void print_unpacker_hunks_conflict(void) {
+    fprintf(stderr, "--unpacker cannot be used with --hunks because unpacking requires complete file contents\n");
+    fprintf(stderr, "Use -h or --help for usage information\n");
+}
+
 void init_cli_options(CliOptions* options) {
     if (!options) {
         return;
@@ -86,6 +91,7 @@ void print_usage(const char* argv0) {
     printf("  -0, --null          Use NUL as the input record delimiter instead of newline (requires --from-stdin)\n");
     printf("      --line-numbers  Prefix exported code lines with line numbers\n");
     printf("      --hunks[=N]     Export only changed hunks with N context lines (default: 3)\n");
+    printf("      --unpacker      Append an LLM-oriented unpacker appendix for full exports\n");
     printf("      --tree          Include a directory tree section (default)\n");
     printf("      --no-tree       Omit the directory tree section\n");
     printf("      --tree-depth    Limit tree rendering depth to N levels\n");
@@ -99,6 +105,12 @@ void print_usage(const char* argv0) {
     printf("      --allow-sensitive Export files even if they match sensitive-file protection rules\n");
 }
 
+/*
+ * CLI invariants:
+ * 1. Parse flags and validate conflicts against the requested mode.
+ * 2. Resolve auto mode into a concrete selection mode and collect paths when needed.
+ * 3. Validate any mode-specific constraints that only make sense after resolution.
+ */
 int parse_cli_options(int argc, char* argv[], CliOptions* options) {
     int force_no_git = 0;
 
@@ -169,6 +181,8 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
             options->show_tree = 0;
         } else if (strcmp(argv[i], "--line-numbers") == 0) {
             options->show_line_numbers = 1;
+        } else if (strcmp(argv[i], "--unpacker") == 0) {
+            options->show_unpacker = 1;
         } else if (strcmp(argv[i], "--hunks") == 0) {
             options->show_hunks = 1;
             options->hunk_context_lines = 3;
@@ -308,6 +322,10 @@ int parse_cli_options(int argc, char* argv[], CliOptions* options) {
          options->requested_mode == FILE_SELECTION_GIT_WORKTREE ||
          options->requested_mode == FILE_SELECTION_STDIN)) {
         print_hunks_conflict();
+        return -1;
+    }
+    if (options->show_hunks && options->show_unpacker) {
+        print_unpacker_hunks_conflict();
         return -1;
     }
 

@@ -98,6 +98,7 @@ fuori [OPTIONS]
 | `-0`, `--null` | Use NUL as the stdin delimiter (requires `--from-stdin`) |
 | `--line-numbers` | Prefix exported code lines with line numbers |
 | `--hunks [<n>]` | In Git delta modes, export only changed hunks plus context lines |
+| `--unpacker` | Append an LLM-oriented unpacker appendix for full exports |
 | `--tree` / `--no-tree` | Include/omit project tree (default: on) |
 | `--tree-depth <n>` | Limit tree render depth |
 | `-s <size_kb>` | Max file size in KB (default: 100) |
@@ -111,6 +112,7 @@ fuori [OPTIONS]
 Git selection flags (`--staged`, `--unstaged`, `--diff`) and `--from-stdin` are mutually exclusive; `--no-git` cannot be combined with them.
 `--no-default-ignore` only applies to filesystem selection.
 `--hunks` only applies to `--staged`, `--unstaged`, and `--diff`.
+`--unpacker` cannot be combined with `--hunks`.
 
 **Examples:**
 
@@ -122,6 +124,7 @@ fuori --diff HEAD~3..HEAD          # Files changed in the last 3 commits
 fuori --diff main...HEAD           # Changes since branching from main
 fuori --staged --hunks             # Only changed hunks with default context
 fuori --diff main...HEAD --hunks=8 # Wider hunk context for review
+fuori --unpacker                   # Append an unpacker appendix for LLM reconstruction
 fuori -o - > codebase.md           # Pipe to stdout
 fuori --no-tree                    # Skip the project tree section
 fuori --tree-depth 2               # Shallow tree
@@ -268,7 +271,8 @@ The output markdown file will contain:
 5. Either a full-file code block or one or more hunk slices separated by omission markers such as `... 84 unchanged lines omitted ...`
 6. Optional line-number prefixes inside code blocks when `--line-numbers` is set; hunk exports keep original file line numbers
 7. Appropriate language identifiers for syntax highlighting
-8. A `stderr` summary of files, bytes, and estimated tokens after successful completion
+8. An optional unpacker appendix with reconstruction instructions and an embedded Python helper when `--unpacker` is set
+9. A `stderr` summary of files, bytes, and estimated tokens after successful completion
 
 Example file contents excerpt (the `Makefile` section is omitted for brevity):
 ````markdown

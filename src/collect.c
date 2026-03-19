@@ -165,7 +165,10 @@ static int is_binary_file(const unsigned char* buffer, size_t bytes_read) {
             ctrl++;
         }
     }
-    return (ctrl * 100 / bytes_read) > 2;
+    size_t whole_hundreds = bytes_read / 100;
+    size_t remainder = bytes_read % 100;
+    size_t threshold = whole_hundreds * 3 + ((remainder * 3 + 99) / 100);
+    return ctrl >= threshold;
 }
 
 static const char* classify_shebang_interpreter(const char* name) {
@@ -242,8 +245,8 @@ static const char* detect_shebang(const unsigned char* buffer, size_t buffer_len
         interpreter = first_base;
     }
 
-    char* interp_base = strrchr(interpreter, '/');
-    interp_base = interp_base ? interp_base + 1 : (char*)interpreter;
+    const char* interp_base = strrchr(interpreter, '/');
+    interp_base = interp_base ? interp_base + 1 : interpreter;
     return classify_shebang_interpreter(interp_base);
 }
 
@@ -357,9 +360,10 @@ static int read_file_buffer(const char* filepath,
     if (buffer_size > 0) {
         bytes_read = fread(buffer, 1, buffer_size, file);
         if (bytes_read < buffer_size) {
+            int read_failed = ferror(file);
             free(buffer);
             fclose(file);
-            if (ferror(file)) {
+            if (read_failed) {
                 perror("Error reading file");
                 return READ_FILE_ERROR;
             }
@@ -594,6 +598,7 @@ static int collect_recursive_paths(const char* base_path,
     if (!dir) {
         if (strcmp(base_path, ".") != 0 &&
             (errno == EACCES || errno == EPERM)) {
+            ctx->skipped_unreadable_dirs++;
             fprintf(stderr, "Warning: Failed to process directory %s\n", base_path);
             return 0;
         }

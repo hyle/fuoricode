@@ -69,6 +69,7 @@ assert_contains "$TMPDIR/help_stdout.txt" "--allow-sensitive"
 assert_contains "$TMPDIR/help_stdout.txt" "--hunks"
 assert_contains "$TMPDIR/help_stdout.txt" "--line-numbers"
 assert_contains "$TMPDIR/help_stdout.txt" "--no-default-ignore"
+assert_contains "$TMPDIR/help_stdout.txt" "--unpacker"
 assert_file_equals "$TMPDIR/help_stderr.txt" ""
 
 OUTSIDE="$TMPDIR/outside"
@@ -101,6 +102,17 @@ assert_not_contains "$OUTSIDE/command_stderr.txt" "Codebase exported to export.m
 assert_contains "$OUTSIDE/redirected.md" "## main.c"
 assert_contains "$OUTSIDE/redirected.md" "## notes.md"
 assert_not_contains "$OUTSIDE/redirected.md" "redirected.md"
+
+(cd "$OUTSIDE" && "$BIN" --unpacker -o - >unpacker_stdout.txt 2>unpacker_stderr.txt)
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "Unpacker: included"
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "<!-- FUORI_FILES_BEGIN -->"
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "<!-- FUORI_FILES_END -->"
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "<!-- FUORI_UNPACKER_BEGIN -->"
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "This export contains complete file bodies and an unpacker helper"
+assert_contains "$OUTSIDE/unpacker_stdout.txt" '```python'
+assert_contains "$OUTSIDE/unpacker_stdout.txt" '#!/usr/bin/env python3'
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "extract_full_export.py <export.md> <output_dir>"
+assert_contains "$OUTSIDE/unpacker_stdout.txt" "<!-- FUORI_UNPACKER_END -->"
 
 LINE_NUMBERS_DIR="$TMPDIR/line_numbers"
 mkdir -p "$LINE_NUMBERS_DIR"
@@ -342,6 +354,7 @@ if [ "$(id -u)" -ne 0 ]; then
     assert_contains "$UNREADABLE_DIR/unreadable_dir_stdout.txt" "## main.c"
     assert_not_contains "$UNREADABLE_DIR/unreadable_dir_stdout.txt" "hidden.c"
     assert_contains "$UNREADABLE_DIR/unreadable_dir_stderr.txt" "Warning: Failed to process directory ./blocked"
+    assert_contains "$UNREADABLE_DIR/unreadable_dir_stderr.txt" "Warning: skipped 1 unreadable directorie(s); export may be incomplete."
 fi
 
 ODD_DIR="$TMPDIR/odd_paths"
@@ -580,6 +593,11 @@ if (cd "$REPO" && "$BIN" --hunks >/dev/null 2>stderr_hunks_default_invalid.txt);
     fail "expected bare --hunks to fail"
 fi
 assert_contains "$REPO/stderr_hunks_default_invalid.txt" "--hunks can only be used with --staged, --unstaged, or --diff"
+
+if (cd "$REPO" && "$BIN" --staged --hunks --unpacker >/dev/null 2>stderr_unpacker_hunks_invalid.txt); then
+    fail "expected --staged --hunks --unpacker to fail"
+fi
+assert_contains "$REPO/stderr_unpacker_hunks_invalid.txt" "--unpacker cannot be used with --hunks because unpacking requires complete file contents"
 
 if (cd "$REPO" && "$BIN" --no-git --hunks >/dev/null 2>stderr_hunks_no_git_invalid.txt); then
     fail "expected --no-git --hunks to fail"

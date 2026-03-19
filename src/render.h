@@ -48,6 +48,7 @@ typedef struct {
     const char* diff_range;
     int show_line_numbers;
     int show_hunks;
+    int show_unpacker;
     int show_tree;
     size_t hunk_context_lines;
     size_t tree_depth;

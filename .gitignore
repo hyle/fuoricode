@@ -2,10 +2,12 @@ fuori
 test_tree
 test_ignore
 fuori-test
+src/generated_unpacker.h
+
+# misc
+.git/
 
 # macOS
 .DS_Store
-
-/scripts
 
 _export.md

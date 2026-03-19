@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
@@ -87,6 +88,7 @@ static void print_verbose_skip_summary(const AppContext* ctx) {
     char ignored_buf[32];
     char symlink_buf[32];
     char sensitive_buf[32];
+    char unreadable_dirs_buf[32];
 
     if (!ctx || !ctx->verbose) {
         return;
@@ -96,24 +98,44 @@ static void print_verbose_skip_summary(const AppContext* ctx) {
         format_size_with_commas(ctx->skipped_too_large, large_buf, sizeof(large_buf)) != 0 ||
         format_size_with_commas(ctx->skipped_ignored, ignored_buf, sizeof(ignored_buf)) != 0 ||
         format_size_with_commas(ctx->skipped_symlink, symlink_buf, sizeof(symlink_buf)) != 0 ||
-        format_size_with_commas(ctx->skipped_sensitive, sensitive_buf, sizeof(sensitive_buf)) != 0) {
+        format_size_with_commas(ctx->skipped_sensitive, sensitive_buf, sizeof(sensitive_buf)) != 0 ||
+        format_size_with_commas(ctx->skipped_unreadable_dirs, unreadable_dirs_buf, sizeof(unreadable_dirs_buf)) != 0) {
         fprintf(stderr,
-                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu, sensitive=%zu\n",
+                "Skipped: binary/empty=%zu, too_large=%zu, ignored=%zu, symlink=%zu, sensitive=%zu, unreadable_dirs=%zu\n",
                 ctx->skipped_binary,
                 ctx->skipped_too_large,
                 ctx->skipped_ignored,
                 ctx->skipped_symlink,
-                ctx->skipped_sensitive);
+                ctx->skipped_sensitive,
+                ctx->skipped_unreadable_dirs);
         return;
     }
 
     fprintf(stderr,
-            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s, sensitive=%s\n",
+            "Skipped: binary/empty=%s, too_large=%s, ignored=%s, symlink=%s, sensitive=%s, unreadable_dirs=%s\n",
             binary_buf,
             large_buf,
             ignored_buf,
             symlink_buf,
-            sensitive_buf);
+            sensitive_buf,
+            unreadable_dirs_buf);
+}
+
+static void print_unreadable_directory_warning(const AppContext* ctx) {
+    char count_buf[32];
+
+    if (!ctx || ctx->skipped_unreadable_dirs == 0) {
+        return;
+    }
+    if (format_size_with_commas(ctx->skipped_unreadable_dirs, count_buf, sizeof(count_buf)) != 0) {
+        fprintf(stderr,
+                "Warning: skipped %zu unreadable directorie(s); export may be incomplete.\n",
+                ctx->skipped_unreadable_dirs);
+        return;
+    }
+    fprintf(stderr,
+            "Warning: skipped %s unreadable directorie(s); export may be incomplete.\n",
+            count_buf);
 }
 
 static int make_temp_output_template(const char* output_path, char* tmpl, size_t tmpl_size) {
@@ -168,6 +190,75 @@ static int format_generated_timestamp(char* buffer, size_t buffer_size) {
     }
     if (strftime(buffer, buffer_size, "%Y-%m-%dT%H:%M:%SZ", &utc_tm) == 0) {
         errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int fsync_stream_file(FILE* file) {
+    int fd;
+
+    if (!file) {
+        errno = EINVAL;
+        return -1;
+    }
+    fd = fileno(file);
+    if (fd == -1) {
+        return -1;
+    }
+    return fsync(fd);
+}
+
+static int fsync_parent_directory(const char* path) {
+    char path_copy[MAX_PATH_LENGTH];
+    int dir_fd = -1;
+    int open_flags = O_RDONLY;
+    char* dir;
+    int saved_errno = 0;
+
+    if (!path || path[0] == '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+    if (strlen(path) >= sizeof(path_copy)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(path_copy, path, strlen(path) + 1);
+    dir = dirname(path_copy);
+    if (!dir || dir[0] == '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+
+#ifdef O_CLOEXEC
+    open_flags |= O_CLOEXEC;
+#endif
+#ifdef O_DIRECTORY
+    open_flags |= O_DIRECTORY;
+#endif
+
+    dir_fd = open(dir, open_flags);
+#ifdef O_DIRECTORY
+    if (dir_fd == -1 && errno == EINVAL) {
+        dir_fd = open(dir, O_RDONLY);
+    }
+#endif
+    if (dir_fd == -1) {
+        return -1;
+    }
+
+    if (fsync(dir_fd) == -1) {
+        saved_errno = errno;
+        close(dir_fd);
+        if (saved_errno == EINVAL || saved_errno == ENOTSUP || saved_errno == EBADF) {
+            return 0;
+        }
+        errno = saved_errno;
+        return -1;
+    }
+    if (close(dir_fd) == -1) {
         return -1;
     }
 
@@ -345,6 +436,7 @@ int main(int argc, char* argv[]) {
     render_ctx.diff_range = options.diff_range;
     render_ctx.show_line_numbers = options.show_line_numbers;
     render_ctx.show_hunks = options.show_hunks;
+    render_ctx.show_unpacker = options.show_unpacker;
     render_ctx.show_tree = ctx.show_tree;
     render_ctx.hunk_context_lines = options.hunk_context_lines;
     render_ctx.tree_depth = ctx.tree_depth;
@@ -461,6 +553,10 @@ int main(int argc, char* argv[]) {
         goto cleanup;
     }
     if (output_needs_close) {
+        if (fsync_stream_file(output_file) != 0) {
+            perror("Error syncing temporary output file");
+            goto cleanup;
+        }
         if (fclose(output_file) != 0) {
             output_file = NULL;
             perror("Error closing output file");
@@ -475,6 +571,10 @@ int main(int argc, char* argv[]) {
             perror("Error moving temporary file to final destination");
             goto cleanup;
         }
+        if (fsync_parent_directory(ctx.output_path) != 0) {
+            perror("Error syncing output directory");
+            goto cleanup;
+        }
         temp_created = 0;
         if (ctx.verbose) {
             fprintf(stderr, "Codebase exported to %s successfully!\n", ctx.output_path);
@@ -484,6 +584,7 @@ int main(int argc, char* argv[]) {
     }
 
     print_export_summary(&metrics);
+    print_unreadable_directory_warning(&ctx);
     print_verbose_skip_summary(&ctx);
 
     status = 0;

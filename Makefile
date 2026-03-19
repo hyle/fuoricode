@@ -5,19 +5,25 @@ CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wwrite-strings -Wredundant-decls \
          -Wstrict-prototypes -Wold-style-definition -std=c99 -O2 -D_POSIX_C_SOURCE=200809L
 TARGET = fuori
 TEST_CLI_TARGET = fuori-test
-SOURCES = src/main.c src/collect.c src/render.c src/git_paths.c src/ignore.c src/options.c src/tree.c src/sensitive.c
+SOURCES = src/main.c src/collect.c src/render.c src/git_paths.c src/ignore.c src/options.c src/tree.c src/sensitive.c src/unpacker.c
 TEST_TARGET = test_ignore
 TREE_TEST_TARGET = test_tree
+UNPACKER_SOURCE = scripts/extract_full_export.py.txt
+UNPACKER_GENERATOR = scripts/generate_unpacker_header.py
+GENERATED_UNPACKER = src/generated_unpacker.h
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 VERSION ?= dev
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCES)
+$(GENERATED_UNPACKER): $(UNPACKER_SOURCE) $(UNPACKER_GENERATOR)
+	python3 $(UNPACKER_GENERATOR) $(UNPACKER_SOURCE) $(GENERATED_UNPACKER)
+
+$(TARGET): $(SOURCES) $(GENERATED_UNPACKER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
-$(TEST_CLI_TARGET): $(SOURCES)
+$(TEST_CLI_TARGET): $(SOURCES) $(GENERATED_UNPACKER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DFUORI_TESTING -o $(TEST_CLI_TARGET) $(SOURCES)
 
 $(TEST_TARGET): tests/test_ignore.c src/ignore.c src/ignore.h
@@ -32,7 +38,7 @@ test: $(TARGET) $(TEST_CLI_TARGET) $(TEST_TARGET) $(TREE_TEST_TARGET)
 	BIN=./$(TEST_CLI_TARGET) sh ./tests/test_cli.sh
 
 clean:
-	rm -f $(TARGET) $(TEST_CLI_TARGET) $(TEST_TARGET) $(TREE_TEST_TARGET)
+	rm -f $(TARGET) $(TEST_CLI_TARGET) $(TEST_TARGET) $(TREE_TEST_TARGET) $(GENERATED_UNPACKER)
 
 install: $(TARGET)
 	install -d $(BINDIR)

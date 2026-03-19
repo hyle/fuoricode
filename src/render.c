@@ -7,6 +7,7 @@
 
 #include "text_io.h"
 #include "tree.h"
+#include "unpacker.h"
 
 #ifdef FUORI_TESTING
 static int maybe_inject_render_failure(size_t index) {
@@ -58,6 +59,16 @@ typedef struct {
 
 static int count_fence_bytes(size_t* total, size_t count, const char* lang);
 static int write_fence(FILE* out, size_t count, const char* lang);
+
+static const char* FILES_BEGIN_MARKER = "<!-- FUORI_FILES_BEGIN -->\n\n";
+static const char* FILES_END_MARKER = "<!-- FUORI_FILES_END -->\n\n";
+static const char* UNPACKER_BEGIN_MARKER = "<!-- FUORI_UNPACKER_BEGIN -->\n\n";
+static const char* UNPACKER_END_MARKER = "<!-- FUORI_UNPACKER_END -->\n";
+static const char* UNPACKER_EXPLANATION =
+    "This export contains complete file bodies and an unpacker helper for frontier LLM workflows. "
+    "To reconstruct the tree locally, write the Python script below to a file such as "
+    "`extract_full_export.py` and run "
+    "`python3 extract_full_export.py <export.md> <output_dir>`.\n\n";
 
 static const char* export_description(FileSelectionMode mode) {
     switch (mode) {
@@ -331,6 +342,10 @@ static int emit_export_header(RenderSink* sink, const ExportRenderContext* ctx) 
             return -1;
         }
     }
+    if (ctx->show_unpacker &&
+        sink_write_text(sink, "\nUnpacker: included") != 0) {
+        return -1;
+    }
 
     if (sink_write_text(sink, "\n\n") != 0 ||
         sink_write_text(sink, export_description(ctx->mode)) != 0) {
@@ -393,6 +408,65 @@ static int emit_change_context(RenderSink* sink, const ExportRenderContext* ctx)
     }
 
     return sink_write_text(sink, "\n");
+}
+
+static int emit_file_entries_marker(RenderSink* sink, size_t visible_count) {
+    if (!sink) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (visible_count == 0) {
+        return 0;
+    }
+    return sink_write_text(sink, FILES_BEGIN_MARKER);
+}
+
+static int emit_file_entries_end_marker(RenderSink* sink, size_t visible_count) {
+    if (!sink) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (visible_count == 0) {
+        return 0;
+    }
+    return sink_write_text(sink, FILES_END_MARKER);
+}
+
+static int emit_unpacker_appendix(RenderSink* sink, const ExportRenderContext* ctx) {
+    const char* script;
+
+    if (!sink || !ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!ctx->show_unpacker) {
+        return 0;
+    }
+
+    script = fuori_unpacker_script();
+    if (!script) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (sink_write_text(sink, UNPACKER_BEGIN_MARKER) != 0 ||
+        sink_write_text(sink, UNPACKER_EXPLANATION) != 0 ||
+        sink_write_fence(sink, 3, "python") != 0 ||
+        sink_write_text(sink, script) != 0) {
+        return -1;
+    }
+    if (fuori_unpacker_script_length() == 0 ||
+        script[fuori_unpacker_script_length() - 1] != '\n') {
+        if (sink_write_char(sink, '\n') != 0) {
+            return -1;
+        }
+    }
+    if (sink_write_fence(sink, 3, NULL) != 0 ||
+        sink_write_text(sink, "\n") != 0 ||
+        sink_write_text(sink, UNPACKER_END_MARKER) != 0) {
+        return -1;
+    }
+    return 0;
 }
 
 int write_export_header(FILE* out, const ExportRenderContext* ctx) {
@@ -965,6 +1039,9 @@ int calculate_export_metrics(const ExportPlan* plan,
         count_project_tree_bytes_filtered(plan, info->include_mask, ctx->tree_depth, &total) != 0) {
         return -1;
     }
+    if (emit_file_entries_marker(&sink, info->visible_count) != 0) {
+        return -1;
+    }
 
     for (size_t i = 0; i < plan->count; i++) {
         if (!info->include_mask[i]) {
@@ -973,6 +1050,10 @@ int calculate_export_metrics(const ExportPlan* plan,
         if (emit_entry(&sink, &plan->entries[i], &info->entries[i], ctx) != 0) {
             return -1;
         }
+    }
+    if (emit_file_entries_end_marker(&sink, info->visible_count) != 0 ||
+        emit_unpacker_appendix(&sink, ctx) != 0) {
+        return -1;
     }
 
     metrics->files_exported = info->visible_count;
@@ -993,6 +1074,10 @@ int render_export_plan(FILE* out,
         return -1;
     }
 
+    if (emit_file_entries_marker(&sink, info->visible_count) != 0) {
+        return -1;
+    }
+
     for (size_t i = 0; i < plan->count; i++) {
         if (!info->include_mask[i]) {
             continue;
@@ -1008,6 +1093,10 @@ int render_export_plan(FILE* out,
         if (emit_entry(&sink, &plan->entries[i], &info->entries[i], ctx) != 0) {
             return -1;
         }
+    }
+    if (emit_file_entries_end_marker(&sink, info->visible_count) != 0 ||
+        emit_unpacker_appendix(&sink, ctx) != 0) {
+        return -1;
     }
     return 0;
 }
