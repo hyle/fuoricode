@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import html
+import re
+import sys
+from pathlib import Path
+
+
+LINE_NUMBER_RE = re.compile(r"^\s*\d+ \| ?(.*)$")
+FILES_BEGIN_MARKER = "<!-- FUORI_FILES_BEGIN -->"
+FILES_END_MARKER = "<!-- FUORI_FILES_END -->"
+
+
+class ExportParseError(Exception):
+    pass
+
+
+def decode_heading_path(text: str) -> str:
+    text = html.unescape(text)
+    result: list[str] = []
+    i = 0
+
+    while i < len(text):
+        if text[i] != "\\":
+            result.append(text[i])
+            i += 1
+            continue
+
+        if i + 1 >= len(text):
+            result.append("\\")
+            break
+
+        next_char = text[i + 1]
+        if next_char == "n":
+            result.append("\n")
+            i += 2
+        elif next_char == "r":
+            result.append("\r")
+            i += 2
+        elif next_char == "t":
+            result.append("\t")
+            i += 2
+        elif next_char in ("\\", "`", "*", "[", "]"):
+            result.append(next_char)
+            i += 2
+        elif next_char == "x" and i + 3 < len(text):
+            hex_value = text[i + 2 : i + 4]
+            try:
+                result.append(chr(int(hex_value, 16)))
+                i += 4
+            except ValueError:
+                result.append("\\")
+                result.append(next_char)
+                i += 2
+        else:
+            result.append("\\")
+            result.append(next_char)
+            i += 2
+
+    return "".join(result)
+
+
+def parse_open_fence(line: str) -> int | None:
+    if not line.startswith("```"):
+        return None
+
+    count = 0
+    while count < len(line) and line[count] == "`":
+        count += 1
+
+    return count if count >= 3 else None
+
+
+def parse_preamble_flags(lines: list[str]) -> tuple[bool, bool]:
+    line_numbers_on = False
+    hunks_on = False
+
+    for line in lines:
+        heading = line.rstrip("\n")
+        if heading.startswith("## "):
+            break
+        if heading == "Line numbers: on":
+            line_numbers_on = True
+        elif heading.startswith("Hunks: on"):
+            hunks_on = True
+
+    return line_numbers_on, hunks_on
+
+
+def strip_line_number(line: str) -> str:
+    newline = "\n" if line.endswith("\n") else ""
+    content = line[:-1] if newline else line
+    match = LINE_NUMBER_RE.fullmatch(content)
+    if not match:
+        raise ExportParseError(f"invalid numbered line: {content!r}")
+    return match.group(1) + newline
+
+
+def next_nonblank_index(lines: list[str], start: int) -> int | None:
+    i = start
+    while i < len(lines) and lines[i].strip() == "":
+        i += 1
+    return i if i < len(lines) else None
+
+
+def read_export_entries(export_path: Path) -> tuple[list[tuple[str, str]], bool]:
+    text = export_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    line_numbers_on, hunks_on = parse_preamble_flags(lines)
+    has_files_marker = any(line.rstrip("\n") == FILES_BEGIN_MARKER for line in lines)
+
+    if hunks_on:
+        raise ExportParseError("hunk exports are not supported; use a full export without --hunks")
+
+    entries: list[tuple[str, str]] = []
+    i = 0
+    seen_file = False
+    saw_files_marker = False
+
+    while i < len(lines):
+        heading = lines[i].rstrip("\n")
+
+        if has_files_marker and not saw_files_marker:
+            if heading == FILES_BEGIN_MARKER:
+                saw_files_marker = True
+            i += 1
+            continue
+
+        if heading == FILES_BEGIN_MARKER:
+            saw_files_marker = True
+            i += 1
+            continue
+        if heading == FILES_END_MARKER:
+            break
+
+        if not seen_file and heading == "## Change Context":
+            i += 1
+            while i < len(lines) and not lines[i].startswith("## "):
+                i += 1
+            continue
+
+        if not seen_file and heading == "## Project Tree":
+            i += 1
+            while i < len(lines) and lines[i].strip() == "":
+                i += 1
+            if i >= len(lines):
+                raise ExportParseError("unterminated project tree section")
+
+            fence_len = parse_open_fence(lines[i].rstrip("\n"))
+            if fence_len is None:
+                raise ExportParseError("project tree section is missing its opening fence")
+            i += 1
+
+            while i < len(lines) and lines[i].rstrip("\n") != ("`" * fence_len):
+                i += 1
+            if i >= len(lines):
+                raise ExportParseError("unterminated project tree code fence")
+            i += 1
+            continue
+
+        if not heading.startswith("## "):
+            i += 1
+            continue
+
+        body_start = next_nonblank_index(lines, i + 1)
+        if body_start is None:
+            raise ExportParseError(f"missing code fence for section {heading[3:]!r}")
+
+        fence_len = parse_open_fence(lines[body_start].rstrip("\n"))
+        if fence_len is None:
+            if not seen_file and not saw_files_marker:
+                raise ExportParseError(f"unexpected non-file section before file entries: {heading!r}")
+            raise ExportParseError(f"invalid code fence for {heading[3:]!r}")
+
+        file_path = decode_heading_path(heading[3:])
+        i = body_start + 1
+
+        body_lines: list[str] = []
+        while i < len(lines):
+            if lines[i].rstrip("\n") == ("`" * fence_len):
+                i += 1
+                break
+            body_lines.append(lines[i])
+            i += 1
+        else:
+            raise ExportParseError(f"unterminated code fence for {file_path!r}")
+
+        if line_numbers_on:
+            body_lines = [strip_line_number(line) for line in body_lines]
+
+        entries.append((file_path, "".join(body_lines)))
+        seen_file = True
+
+    return entries, line_numbers_on
+
+
+def safe_output_path(output_dir: Path, export_path: str) -> Path:
+    relative = Path(export_path.lstrip("/")) if export_path.startswith("/") else Path(export_path)
+    destination = (output_dir / relative).resolve()
+    output_root = output_dir.resolve()
+
+    try:
+        destination.relative_to(output_root)
+    except ValueError as exc:
+        raise ExportParseError(f"refusing to write outside output directory: {export_path!r}") from exc
+
+    return destination
+
+
+def write_entries(output_dir: Path, entries: list[tuple[str, str]]) -> None:
+    for export_path, content in entries:
+        destination = safe_output_path(output_dir, export_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Extract source files from a full fuori markdown export."
+    )
+    parser.add_argument("export", type=Path, help="Path to the markdown export")
+    parser.add_argument("output_dir", type=Path, help="Directory to reconstruct files into")
+    args = parser.parse_args()
+
+    try:
+        entries, _ = read_export_entries(args.export)
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        write_entries(args.output_dir, entries)
+    except (OSError, ExportParseError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

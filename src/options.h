@@ -14,6 +14,7 @@ typedef struct {
     int show_tree;
     int show_line_numbers;
     int show_hunks;
+    int show_unpacker;
     int no_default_ignore;
     int allow_sensitive;
     size_t max_file_size;

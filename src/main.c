@@ -345,6 +345,7 @@ int main(int argc, char* argv[]) {
     render_ctx.diff_range = options.diff_range;
     render_ctx.show_line_numbers = options.show_line_numbers;
     render_ctx.show_hunks = options.show_hunks;
+    render_ctx.show_unpacker = options.show_unpacker;
     render_ctx.show_tree = ctx.show_tree;
     render_ctx.hunk_context_lines = options.hunk_context_lines;
     render_ctx.tree_depth = ctx.tree_depth;

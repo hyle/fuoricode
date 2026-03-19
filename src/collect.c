@@ -357,9 +357,10 @@ static int read_file_buffer(const char* filepath,
     if (buffer_size > 0) {
         bytes_read = fread(buffer, 1, buffer_size, file);
         if (bytes_read < buffer_size) {
+            int read_failed = ferror(file);
             free(buffer);
             fclose(file);
-            if (ferror(file)) {
+            if (read_failed) {
                 perror("Error reading file");
                 return READ_FILE_ERROR;
             }
