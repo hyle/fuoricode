@@ -15,6 +15,10 @@ typedef enum {
     GIT_PROBE_FALLBACK
 } GitProbeResult;
 
+#ifndef GIT_CAPTURE_MAX_BYTES
+#define GIT_CAPTURE_MAX_BYTES (64U * 1024U * 1024U)
+#endif
+
 #define GIT_SELECTION_ARGS_MAX 13
 #define GIT_HUNK_ARGS_MAX 13
 
@@ -51,6 +55,23 @@ static int compare_selected_paths(const void* lhs, const void* rhs) {
     }
     return strcmp(left->previous_repo_rel_path ? left->previous_repo_rel_path : "",
                   right->previous_repo_rel_path ? right->previous_repo_rel_path : "");
+}
+
+static int set_fd_cloexec(int fd) {
+    int flags;
+
+    if (fd < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    flags = fcntl(fd, F_GETFD);
+    if (flags == -1) {
+        return -1;
+    }
+    if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
+        return -1;
+    }
+    return 0;
 }
 
 void free_selected_paths(SelectedPath* paths, size_t count) {
@@ -143,7 +164,10 @@ static int run_command_capture(const char* const argv[],
         close(stdout_pipe[1]);
         return -1;
     }
-    if (fcntl(error_pipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+    if (set_fd_cloexec(stdout_pipe[0]) == -1 ||
+        set_fd_cloexec(stdout_pipe[1]) == -1 ||
+        set_fd_cloexec(error_pipe[0]) == -1 ||
+        set_fd_cloexec(error_pipe[1]) == -1) {
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
         close(error_pipe[0]);
@@ -213,6 +237,11 @@ static int run_command_capture(const char* const argv[],
             if (errno == EINTR) {
                 continue;
             }
+            goto cleanup;
+        }
+        if ((size_t)read_len > GIT_CAPTURE_MAX_BYTES ||
+            used > GIT_CAPTURE_MAX_BYTES - (size_t)read_len) {
+            errno = EFBIG;
             goto cleanup;
         }
         if (used + (size_t)read_len < used) {

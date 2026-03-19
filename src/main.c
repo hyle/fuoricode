@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
@@ -168,6 +169,75 @@ static int format_generated_timestamp(char* buffer, size_t buffer_size) {
     }
     if (strftime(buffer, buffer_size, "%Y-%m-%dT%H:%M:%SZ", &utc_tm) == 0) {
         errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int fsync_stream_file(FILE* file) {
+    int fd;
+
+    if (!file) {
+        errno = EINVAL;
+        return -1;
+    }
+    fd = fileno(file);
+    if (fd == -1) {
+        return -1;
+    }
+    return fsync(fd);
+}
+
+static int fsync_parent_directory(const char* path) {
+    char path_copy[MAX_PATH_LENGTH];
+    int dir_fd = -1;
+    int open_flags = O_RDONLY;
+    char* dir;
+    int saved_errno = 0;
+
+    if (!path || path[0] == '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+    if (strlen(path) >= sizeof(path_copy)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(path_copy, path, strlen(path) + 1);
+    dir = dirname(path_copy);
+    if (!dir || dir[0] == '\0') {
+        errno = EINVAL;
+        return -1;
+    }
+
+#ifdef O_CLOEXEC
+    open_flags |= O_CLOEXEC;
+#endif
+#ifdef O_DIRECTORY
+    open_flags |= O_DIRECTORY;
+#endif
+
+    dir_fd = open(dir, open_flags);
+#ifdef O_DIRECTORY
+    if (dir_fd == -1 && errno == EINVAL) {
+        dir_fd = open(dir, O_RDONLY);
+    }
+#endif
+    if (dir_fd == -1) {
+        return -1;
+    }
+
+    if (fsync(dir_fd) == -1) {
+        saved_errno = errno;
+        close(dir_fd);
+        if (saved_errno == EINVAL || saved_errno == ENOTSUP || saved_errno == EBADF) {
+            return 0;
+        }
+        errno = saved_errno;
+        return -1;
+    }
+    if (close(dir_fd) == -1) {
         return -1;
     }
 
@@ -462,6 +532,10 @@ int main(int argc, char* argv[]) {
         goto cleanup;
     }
     if (output_needs_close) {
+        if (fsync_stream_file(output_file) != 0) {
+            perror("Error syncing temporary output file");
+            goto cleanup;
+        }
         if (fclose(output_file) != 0) {
             output_file = NULL;
             perror("Error closing output file");
@@ -474,6 +548,10 @@ int main(int argc, char* argv[]) {
     if (!ctx.output_is_stdout) {
         if (rename(temp_output_path, ctx.output_path) == -1) {
             perror("Error moving temporary file to final destination");
+            goto cleanup;
+        }
+        if (fsync_parent_directory(ctx.output_path) != 0) {
+            perror("Error syncing output directory");
             goto cleanup;
         }
         temp_created = 0;

@@ -105,6 +105,12 @@ void print_usage(const char* argv0) {
     printf("      --allow-sensitive Export files even if they match sensitive-file protection rules\n");
 }
 
+/*
+ * CLI invariants:
+ * 1. Parse flags and validate conflicts against the requested mode.
+ * 2. Resolve auto mode into a concrete selection mode and collect paths when needed.
+ * 3. Validate any mode-specific constraints that only make sense after resolution.
+ */
 int parse_cli_options(int argc, char* argv[], CliOptions* options) {
     int force_no_git = 0;
 
