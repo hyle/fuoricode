@@ -41,7 +41,7 @@ Turns your messy working tree into clean, auditable context. Zero copy-paste, ze
 
 Design notes live in [`docs/design.md`](docs/design.md).
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hyle/fuoricode)
+[Additional documentation on DeepWiki](https://deepwiki.com/hyle/fuoricode)
 
 ## Requirements
 
